@@ -5,7 +5,7 @@
 # Pfad auf Server: /opt/containers/novabrands-mgmt/docker-compose.yml
 #
 # Services: Traefik, OpenProject, Nextcloud, Collabora, Coder
-# Datenbanken: 3x PostgreSQL 16, 1x Redis 7, 1x Memcached
+# Datenbanken: 3x PostgreSQL 18, 1x Redis 7, 1x Memcached
 #
 # NETZWERKE:
 # - proxy:                Traefik -> oeffentliche Services
