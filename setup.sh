@@ -179,7 +179,7 @@ ClientAliveInterval 300
 ClientAliveCountMax 2
 SSHEOF
   sudo chmod 644 /etc/ssh/sshd_config.d/90-hardening.conf
-  sudo systemctl restart sshd
+  sudo systemctl restart ssh
 "
 ok "SSH gehaertet (Root=no, Key-only, ClientAlive=300s)."
 
