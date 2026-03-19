@@ -1,0 +1,574 @@
+#!/bin/bash
+# ============================================================================
+# Documentation Stack - Server Setup Script
+# ============================================================================
+# Provisioniert einen OVH RISE-S Dedicated Server (Ubuntu 24.04 LTS):
+#   1.  RAID-Health pruefen
+#   2.  Needrestart auf automatisch stellen (keine interaktiven Prompts)
+#   3.  System-Update (apt upgrade)
+#   4.  SSH-Hardening (Root-Login deaktivieren, Limits setzen)
+#   5.  Pakete installieren (Docker, fail2ban)
+#   6.  Unnoetige Services deaktivieren
+#   7.  Kernel-Hardening (sysctl)
+#   8.  Shared Memory haerten (/dev/shm noexec)
+#   9.  System-Tuning (Timezone, Locale, Swappiness)
+#   10. fail2ban SSH-Jail konfigurieren
+#   11. Firewall konfigurieren (UFW)
+#   12. Docker konfigurieren (Logging, Live-Restore, Security)
+#   13. Verzeichnisstruktur + acme.json anlegen
+#   14. Docker-Netzwerke erstellen
+#   15. Repository klonen
+#   16. secrets.env generieren
+#   17. DNS Records bei Cloudflare anlegen
+#   18. Traefik + Socket Proxy starten
+#
+# Voraussetzungen:
+#   - curl, jq, openssl, ssh, pass-cli installiert
+#   - pass-cli eingeloggt (pass-cli login)
+#   - CLOUDFLARE_API_TOKEN und CLOUDFLARE_ZONE_ID gesetzt
+#   - SSH Key ~/.ssh/novabrands-mgmt vorhanden
+#   - Proton Pass Vault "Novabrands Infra" mit allen Items angelegt
+#   - OVH-Server laeuft mit Ubuntu 24.04, User 'ubuntu' mit sudo
+#
+# Verwendung:
+#   pass-cli login
+#   export CLOUDFLARE_API_TOKEN=... CLOUDFLARE_ZONE_ID=...
+#   ./setup.sh
+# ============================================================================
+set -euo pipefail
+trap 'error "Setup fehlgeschlagen in Zeile $LINENO."' ERR
+
+# ---------------------------------------------------------------------------
+# KONFIGURATION
+# ---------------------------------------------------------------------------
+SERVER_IP="51.77.84.41"
+SSH_KEY_FILE="${HOME}/.ssh/novabrands-mgmt"
+ADMIN_USER="ubuntu"
+REPO_URL="https://github.com/SWATPeaceKeeper/novabrands-mgmt.git"
+DEPLOY_DIR="/opt/containers/novabrands-mgmt"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Subdomains fuer DNS und Traefik
+SUBDOMAINS=("openproject" "cloud" "office" "coder" "traefik")
+
+# ---------------------------------------------------------------------------
+# HILFSFUNKTIONEN
+# ---------------------------------------------------------------------------
+info()  { echo -e "\033[1;34m[INFO]\033[0m  $*"; }
+ok()    { echo -e "\033[1;32m[OK]\033[0m    $*"; }
+warn()  { echo -e "\033[1;33m[WARN]\033[0m  $*"; }
+error() { echo -e "\033[1;31m[ERROR]\033[0m $*" >&2; }
+die()   { error "$*"; exit 1; }
+
+remote() {
+  ssh -i "$SSH_KEY_FILE" \
+    -o StrictHostKeyChecking=no \
+    -o UserKnownHostsFile=/dev/null \
+    -o BatchMode=yes \
+    -o LogLevel=ERROR \
+    "${ADMIN_USER}@${SERVER_IP}" "$@"
+}
+
+cf_api() {
+  local method="$1" endpoint="$2"
+  shift 2
+  local response
+  response=$(curl -s -X "$method" \
+    "https://api.cloudflare.com/client/v4${endpoint}" \
+    -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+    -H "Content-Type: application/json" \
+    "$@")
+
+  if ! echo "$response" | jq -e '.success' >/dev/null 2>&1; then
+    local msg
+    msg=$(echo "$response" | jq -r '.errors[0].message // "Unbekannter Fehler"' 2>/dev/null || echo "Ungueltige API-Antwort")
+    die "Cloudflare API Fehler: ${msg}"
+  fi
+
+  echo "$response"
+}
+
+# ---------------------------------------------------------------------------
+# 1. VORAUSSETZUNGEN PRUEFEN
+# ---------------------------------------------------------------------------
+info "Pruefe Voraussetzungen..."
+
+for cmd in curl jq openssl ssh pass-cli; do
+  command -v "$cmd" >/dev/null 2>&1 || die "'${cmd}' ist nicht installiert. Fuer pass-cli: curl -fsSL https://proton.me/download/pass-cli/install.sh | bash"
+done
+
+[ -z "${CLOUDFLARE_API_TOKEN:-}" ] && die "CLOUDFLARE_API_TOKEN ist nicht gesetzt."
+[ -z "${CLOUDFLARE_ZONE_ID:-}" ] && die "CLOUDFLARE_ZONE_ID ist nicht gesetzt."
+[ -f "$SSH_KEY_FILE" ] || die "SSH Key nicht gefunden: ${SSH_KEY_FILE}"
+[ -f "$(dirname "$0")/.env.template" ] || die ".env.template nicht gefunden. Bist du im Repo-Verzeichnis?"
+
+# Pruefen ob pass-cli eingeloggt ist
+pass-cli vault list >/dev/null 2>&1 || die "pass-cli nicht eingeloggt. Erst: pass-cli login"
+
+info "Server:  ${SERVER_IP}"
+info "User:    ${ADMIN_USER}"
+info "SSH Key: ${SSH_KEY_FILE}"
+
+ok "Voraussetzungen erfuellt."
+
+# ---------------------------------------------------------------------------
+# 2. SSH-VERBINDUNG TESTEN
+# ---------------------------------------------------------------------------
+info "Teste SSH-Verbindung..."
+
+remote true 2>/dev/null || die "SSH-Verbindung fehlgeschlagen."
+ok "SSH bereit."
+
+# ---------------------------------------------------------------------------
+# 3. RAID-HEALTH PRUEFEN
+# ---------------------------------------------------------------------------
+info "Pruefe RAID-Status..."
+
+RAID_STATUS=$(remote "cat /proc/mdstat" 2>/dev/null)
+if echo "$RAID_STATUS" | grep -q '\[UU\]'; then
+  ok "RAID-1 healthy (alle Disks aktiv)."
+else
+  warn "RAID-Status nicht optimal:"
+  echo "$RAID_STATUS"
+  die "RAID ist nicht healthy. Server nicht provisionieren bis RAID repariert."
+fi
+
+# ---------------------------------------------------------------------------
+# 4. NEEDRESTART KONFIGURIEREN
+# ---------------------------------------------------------------------------
+info "Konfiguriere needrestart (keine interaktiven Prompts)..."
+
+remote "
+  if [ -f /etc/needrestart/needrestart.conf ]; then
+    sudo sed -i 's/^#\?\$nrconf{restart} .*/\$nrconf{restart} = \"a\";/' /etc/needrestart/needrestart.conf
+  fi
+  export DEBIAN_FRONTEND=noninteractive
+  export NEEDRESTART_MODE=a
+"
+ok "Needrestart auf automatisch gestellt."
+
+# ---------------------------------------------------------------------------
+# 5. SYSTEM-UPDATE
+# ---------------------------------------------------------------------------
+info "System-Update (kann einige Minuten dauern)..."
+
+remote "
+  export DEBIAN_FRONTEND=noninteractive
+  export NEEDRESTART_MODE=a
+  sudo -E apt-get update -qq
+  sudo -E apt-get upgrade -y -qq >/dev/null 2>&1
+"
+ok "System aktualisiert."
+
+# ---------------------------------------------------------------------------
+# 6. SSH-HARDENING
+# ---------------------------------------------------------------------------
+info "SSH-Hardening..."
+
+remote "
+  sudo tee /etc/ssh/sshd_config.d/90-hardening.conf > /dev/null <<'SSHEOF'
+PermitRootLogin no
+PasswordAuthentication no
+MaxAuthTries 3
+LoginGraceTime 20
+AllowAgentForwarding no
+AllowTcpForwarding no
+X11Forwarding no
+AllowUsers ubuntu
+ClientAliveInterval 300
+ClientAliveCountMax 2
+SSHEOF
+  sudo chmod 644 /etc/ssh/sshd_config.d/90-hardening.conf
+  sudo systemctl restart sshd
+"
+ok "SSH gehaertet (Root=no, Key-only, ClientAlive=300s)."
+
+# ---------------------------------------------------------------------------
+# 7. PAKETE INSTALLIEREN
+# ---------------------------------------------------------------------------
+info "Installiere Pakete (Docker, fail2ban, htop, jq)..."
+
+remote "
+  export DEBIAN_FRONTEND=noninteractive
+  export NEEDRESTART_MODE=a
+  sudo -E apt-get install -y -qq ca-certificates curl git htop vim jq \
+    fail2ban apache2-utils >/dev/null 2>&1
+
+  # Docker (offizielle Repos)
+  if ! command -v docker &>/dev/null; then
+    sudo install -m 0755 -d /etc/apt/keyrings
+    sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+      -o /etc/apt/keyrings/docker.asc
+    sudo chmod a+r /etc/apt/keyrings/docker.asc
+    ARCH=\$(dpkg --print-architecture)
+    CODENAME=\$(. /etc/os-release && echo \"\$VERSION_CODENAME\")
+    echo \"deb [arch=\${ARCH} signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \${CODENAME} stable\" | \
+      sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+    sudo -E apt-get update -qq
+    sudo -E apt-get install -y -qq docker-ce docker-ce-cli containerd.io \
+      docker-buildx-plugin docker-compose-plugin >/dev/null 2>&1
+    sudo systemctl enable docker
+    sudo systemctl start docker
+    echo 'Docker installiert.'
+  else
+    echo 'Docker bereits installiert.'
+  fi
+
+  # User zur Docker-Gruppe
+  sudo usermod -aG docker '${ADMIN_USER}'
+
+  # Aufraeumen
+  sudo -E apt-get autoremove -y -qq >/dev/null 2>&1
+  sudo -E apt-get clean
+"
+ok "Pakete installiert."
+
+# ---------------------------------------------------------------------------
+# 8. UNNOETIGE SERVICES DEAKTIVIEREN
+# ---------------------------------------------------------------------------
+info "Deaktiviere unnoetige Services..."
+
+remote "
+  for svc in ModemManager multipathd udisks2; do
+    if systemctl is-active --quiet \"\$svc\" 2>/dev/null; then
+      sudo systemctl stop \"\$svc\"
+      sudo systemctl disable \"\$svc\"
+      sudo systemctl mask \"\$svc\"
+      echo \"Deaktiviert: \$svc\"
+    fi
+  done
+"
+ok "Unnoetige Services deaktiviert (ModemManager, multipathd, udisks2)."
+
+# ---------------------------------------------------------------------------
+# 9. KERNEL-HARDENING (sysctl)
+# ---------------------------------------------------------------------------
+info "Kernel-Hardening (Netzwerk-Sicherheit, ASLR)..."
+
+remote "
+  sudo tee /etc/sysctl.d/90-hardening.conf > /dev/null <<'SYSCTL'
+# --- Netzwerk-Sicherheit ---
+# IP-Spoofing-Schutz
+net.ipv4.conf.all.rp_filter = 1
+net.ipv4.conf.default.rp_filter = 1
+
+# ICMP-Redirects ignorieren (MITM-Schutz)
+net.ipv4.conf.all.accept_redirects = 0
+net.ipv4.conf.default.accept_redirects = 0
+net.ipv6.conf.all.accept_redirects = 0
+net.ipv6.conf.default.accept_redirects = 0
+net.ipv4.conf.all.send_redirects = 0
+net.ipv4.conf.default.send_redirects = 0
+
+# Source Routing deaktivieren
+net.ipv4.conf.all.accept_source_route = 0
+net.ipv4.conf.default.accept_source_route = 0
+net.ipv6.conf.all.accept_source_route = 0
+net.ipv6.conf.default.accept_source_route = 0
+
+# SYN-Flood-Schutz
+net.ipv4.tcp_syncookies = 1
+net.ipv4.tcp_max_syn_backlog = 2048
+net.ipv4.tcp_synack_retries = 2
+
+# ICMP Broadcast ignorieren (Smurf-Angriffe)
+net.ipv4.icmp_echo_ignore_broadcasts = 1
+net.ipv4.icmp_ignore_bogus_error_responses = 1
+
+# Keine Router-Advertisements akzeptieren
+net.ipv6.conf.all.accept_ra = 0
+net.ipv6.conf.default.accept_ra = 0
+
+# IP-Forwarding: Docker braucht IPv4 forwarding fuer Container-Netzwerk
+net.ipv4.ip_forward = 1
+net.ipv6.conf.all.forwarding = 0
+
+# --- Kernel-Sicherheit ---
+# ASLR aktiviert (Default, explizit setzen)
+kernel.randomize_va_space = 2
+
+# Core Dumps deaktivieren
+fs.suid_dumpable = 0
+
+# dmesg nur fuer root
+kernel.dmesg_restrict = 1
+
+# Kernel-Pointer verstecken
+kernel.kptr_restrict = 2
+SYSCTL
+  sudo sysctl -p /etc/sysctl.d/90-hardening.conf >/dev/null 2>&1
+"
+ok "Kernel gehaertet (Spoofing, Redirects, SYN-Flood, ASLR, Core Dumps)."
+
+# ---------------------------------------------------------------------------
+# 10. SHARED MEMORY HAERTEN
+# ---------------------------------------------------------------------------
+info "Haerte /dev/shm (noexec, nosuid, nodev)..."
+
+remote "
+  if ! grep -q '/dev/shm' /etc/fstab; then
+    echo 'tmpfs /dev/shm tmpfs defaults,noexec,nosuid,nodev 0 0' | sudo tee -a /etc/fstab >/dev/null
+    sudo mount -o remount /dev/shm
+  fi
+"
+ok "/dev/shm gehaertet."
+
+# ---------------------------------------------------------------------------
+# 11. SYSTEM-TUNING
+# ---------------------------------------------------------------------------
+info "System-Tuning (Timezone, Locale, Swappiness)..."
+
+remote "
+  # Timezone
+  sudo timedatectl set-timezone Europe/Berlin
+
+  # Locale
+  sudo locale-gen de_DE.UTF-8 >/dev/null 2>&1
+  sudo update-locale LANG=de_DE.UTF-8 >/dev/null 2>&1
+
+  # Swappiness runter (64 GB RAM, Swap nur als Notfall)
+  sudo sysctl -w vm.swappiness=10 >/dev/null
+  echo 'vm.swappiness=10' | sudo tee /etc/sysctl.d/99-swappiness.conf >/dev/null
+"
+ok "Timezone=Europe/Berlin, Locale=de_DE.UTF-8, Swappiness=10."
+
+# ---------------------------------------------------------------------------
+# 12. FAIL2BAN SSH-JAIL
+# ---------------------------------------------------------------------------
+info "Konfiguriere fail2ban SSH-Jail..."
+
+remote "
+  sudo tee /etc/fail2ban/jail.local > /dev/null <<'F2B'
+[sshd]
+enabled = true
+port = ssh
+filter = sshd
+backend = systemd
+maxretry = 3
+findtime = 600
+bantime = 3600
+F2B
+  sudo systemctl enable fail2ban >/dev/null 2>&1
+  sudo systemctl restart fail2ban
+"
+ok "fail2ban aktiv (SSH: 3 Versuche, 1h Ban)."
+
+# ---------------------------------------------------------------------------
+# 13. FIREWALL (UFW)
+# ---------------------------------------------------------------------------
+info "Konfiguriere Firewall (UFW)..."
+
+remote "
+  sudo ufw default deny incoming >/dev/null
+  sudo ufw default allow outgoing >/dev/null
+  sudo ufw allow ssh >/dev/null
+  sudo ufw allow 80/tcp >/dev/null
+  sudo ufw allow 443/tcp >/dev/null
+  sudo ufw --force enable >/dev/null
+"
+ok "Firewall aktiv (SSH, HTTP, HTTPS)."
+
+# ---------------------------------------------------------------------------
+# 14. DOCKER KONFIGURIEREN
+# ---------------------------------------------------------------------------
+info "Konfiguriere Docker (Logging, Live-Restore, Security)..."
+
+remote "
+  sudo mkdir -p /etc/docker
+  sudo tee /etc/docker/daemon.json > /dev/null <<'DOCKERCFG'
+{
+  \"log-driver\": \"json-file\",
+  \"log-opts\": {
+    \"max-size\": \"10m\",
+    \"max-file\": \"3\"
+  },
+  \"live-restore\": true,
+  \"default-security-opt\": [\"no-new-privileges\"],
+  \"userland-proxy\": false
+}
+DOCKERCFG
+  sudo systemctl restart docker
+"
+ok "Docker konfiguriert (Logging=10m/3, Live-Restore=on, no-new-privileges=on)."
+
+# ---------------------------------------------------------------------------
+# 15. VERZEICHNISSTRUKTUR
+# ---------------------------------------------------------------------------
+info "Erstelle Verzeichnisse..."
+
+remote "
+  sudo mkdir -p '${DEPLOY_DIR}/traefik'
+  sudo mkdir -p '${DEPLOY_DIR}/db-dumps'
+  sudo mkdir -p /opt/containers/traefik/certs
+  sudo mkdir -p /var/log/traefik
+
+  # acme.json fuer Let's Encrypt (MUSS 600 sein)
+  sudo touch /opt/containers/traefik/certs/acme.json
+  sudo chmod 600 /opt/containers/traefik/certs/acme.json
+
+  # Eigentuemer auf Admin-User
+  sudo chown -R '${ADMIN_USER}:${ADMIN_USER}' /opt/containers
+  sudo chown -R '${ADMIN_USER}:${ADMIN_USER}' /var/log/traefik
+"
+ok "Verzeichnisse erstellt."
+
+# ---------------------------------------------------------------------------
+# 16. DOCKER-NETZWERKE
+# ---------------------------------------------------------------------------
+info "Erstelle Docker-Netzwerke..."
+
+remote "
+  sudo docker network create proxy 2>/dev/null || true
+  sudo docker network create openproject-backend 2>/dev/null || true
+  sudo docker network create nextcloud-backend 2>/dev/null || true
+  sudo docker network create coder-backend 2>/dev/null || true
+"
+ok "Netzwerke erstellt (proxy, openproject-backend, nextcloud-backend, coder-backend)."
+
+# ---------------------------------------------------------------------------
+# 17. REPO KLONEN
+# ---------------------------------------------------------------------------
+info "Klone Repository..."
+
+remote "
+  if [ -d '${DEPLOY_DIR}/.git' ]; then
+    cd '${DEPLOY_DIR}' && git pull
+  else
+    git clone '${REPO_URL}' '${DEPLOY_DIR}'
+  fi
+"
+ok "Repository geklont."
+
+# ---------------------------------------------------------------------------
+# 18. .ENV AUS PROTON PASS GENERIEREN
+# ---------------------------------------------------------------------------
+SECRETS_EXIST=$(remote "[ -f '${DEPLOY_DIR}/.env' ] && echo 'yes' || echo 'no'")
+if [ "$SECRETS_EXIST" = "yes" ]; then
+  warn ".env existiert bereits auf dem Server — wird NICHT ueberschrieben."
+  warn "Zum Neugenerieren: .env auf dem Server loeschen und setup.sh erneut ausfuehren."
+  TRAEFIK_PASSWORD="(siehe .env auf dem Server)"
+else
+  info "Generiere .env aus Proton Pass (pass-cli inject)..."
+
+  LOCAL_ENV=$(mktemp)
+
+  # Secrets aus Proton Pass aufloesen
+  pass-cli inject \
+    --in-file "${SCRIPT_DIR}/.env.template" \
+    --out-file "$LOCAL_ENV" \
+    --file-mode 0600 \
+    --force || die "pass-cli inject fehlgeschlagen. Sind alle Items im Vault 'Novabrands Infra' angelegt?"
+
+  # Traefik Dashboard htpasswd aus aufgeloestem Passwort generieren
+  TRAEFIK_PASSWORD=$(grep '^TRAEFIK_DASHBOARD_PASSWORD=' "$LOCAL_ENV" | cut -d= -f2-)
+  [ -z "$TRAEFIK_PASSWORD" ] && die "TRAEFIK_DASHBOARD_PASSWORD nicht aufgeloest. Proton Pass Item pruefen."
+
+  if command -v htpasswd >/dev/null 2>&1; then
+    TRAEFIK_AUTH=$(htpasswd -nb admin "$TRAEFIK_PASSWORD")
+  else
+    TRAEFIK_AUTH=$(remote "htpasswd -nb admin '${TRAEFIK_PASSWORD}'")
+  fi
+  TRAEFIK_AUTH_ESCAPED=$(echo "$TRAEFIK_AUTH" | sed 's/\$/\$\$/g')
+
+  sed -i "s|^TRAEFIK_DASHBOARD_AUTH=.*|TRAEFIK_DASHBOARD_AUTH=${TRAEFIK_AUTH_ESCAPED}|" "$LOCAL_ENV"
+
+  # .env auf den Server kopieren
+  scp -i "$SSH_KEY_FILE" \
+    -o StrictHostKeyChecking=no \
+    -o UserKnownHostsFile=/dev/null \
+    -o LogLevel=ERROR \
+    "$LOCAL_ENV" "${ADMIN_USER}@${SERVER_IP}:${DEPLOY_DIR}/.env"
+
+  remote "chmod 600 '${DEPLOY_DIR}/.env'"
+  rm -f "$LOCAL_ENV"
+  ok ".env aus Proton Pass generiert und auf Server kopiert."
+fi
+
+# ---------------------------------------------------------------------------
+# 19. DNS RECORDS (Cloudflare)
+# ---------------------------------------------------------------------------
+info "DNS Records bei Cloudflare..."
+
+# Domain aus .env.template lesen (Klartext, kein Secret)
+DOMAIN=$(grep '^DOMAIN=' "${SCRIPT_DIR}/.env.template" | cut -d= -f2-)
+[ -z "$DOMAIN" ] && die "DOMAIN nicht in .env.template gefunden."
+info "Domain: ${DOMAIN}"
+
+for sub in "${SUBDOMAINS[@]}"; do
+  FQDN="${sub}.${DOMAIN}"
+
+  EXISTING=$(cf_api GET "/zones/${CLOUDFLARE_ZONE_ID}/dns_records?type=A&name=${FQDN}" | jq -r '.result | length')
+
+  if [ "$EXISTING" -gt "0" ]; then
+    RECORD_ID=$(cf_api GET "/zones/${CLOUDFLARE_ZONE_ID}/dns_records?type=A&name=${FQDN}" | jq -r '.result[0].id')
+    cf_api PUT "/zones/${CLOUDFLARE_ZONE_ID}/dns_records/${RECORD_ID}" \
+      -d "{\"type\":\"A\",\"name\":\"${sub}\",\"content\":\"${SERVER_IP}\",\"ttl\":300,\"proxied\":false}" >/dev/null
+    ok "${FQDN} -> ${SERVER_IP} (aktualisiert)"
+  else
+    cf_api POST "/zones/${CLOUDFLARE_ZONE_ID}/dns_records" \
+      -d "{\"type\":\"A\",\"name\":\"${sub}\",\"content\":\"${SERVER_IP}\",\"ttl\":300,\"proxied\":false}" >/dev/null
+    ok "${FQDN} -> ${SERVER_IP} (erstellt)"
+  fi
+done
+
+# ---------------------------------------------------------------------------
+# 20. TRAEFIK + SOCKET PROXY STARTEN
+# ---------------------------------------------------------------------------
+info "Starte Traefik + Socket Proxy..."
+
+remote "cd '${DEPLOY_DIR}' && sudo docker compose up -d socket-proxy traefik"
+
+sleep 5
+TRAEFIK_STATUS=$(remote "sudo docker ps --filter name=traefik --format '{{.Status}}'")
+echo "$TRAEFIK_STATUS" | grep -q "Up" || \
+  die "Traefik ist nicht gestartet. Pruefe: ssh -i ${SSH_KEY_FILE} ${ADMIN_USER}@${SERVER_IP} 'sudo docker logs traefik'"
+
+ok "Traefik + Socket Proxy laufen."
+
+# ---------------------------------------------------------------------------
+# ZUSAMMENFASSUNG
+# ---------------------------------------------------------------------------
+echo ""
+echo "============================================================================"
+echo "  DOCUMENTATION STACK - SERVER SETUP ABGESCHLOSSEN"
+echo "============================================================================"
+echo ""
+echo "  Server:     ${SERVER_IP} (novabrands-mgmt)"
+echo "  SSH:        ssh -i ${SSH_KEY_FILE} ${ADMIN_USER}@${SERVER_IP}"
+echo "  User:       ${ADMIN_USER} (sudo, Docker)"
+echo "  Domain:     ${DOMAIN}"
+echo "  OS:         Ubuntu 24.04 LTS"
+echo "  RAID:       md2 (/boot) + md3 (/) — RAID-1, ext4"
+echo ""
+echo "  Sicherheit:"
+echo "    UFW:            aktiv (SSH, HTTP, HTTPS)"
+echo "    fail2ban:       aktiv (SSH: 3 Versuche, 1h Ban)"
+echo "    SSH:            Key-only, Root=no, ClientAlive=300s"
+echo "    Kernel:         Spoofing/Redirect/SYN-Flood-Schutz, ASLR, no Core Dumps"
+echo "    /dev/shm:       noexec, nosuid, nodev"
+echo "    Docker:         live-restore, no-new-privileges, Socket Proxy"
+echo "    Swappiness:     10"
+echo "    Services:       ModemManager, multipathd, udisks2 deaktiviert"
+echo ""
+echo "  DNS Records:"
+for sub in "${SUBDOMAINS[@]}"; do
+  printf "    %-16s https://%s.%s\n" "${sub}:" "${sub}" "${DOMAIN}"
+done
+echo ""
+echo "  Traefik Dashboard:"
+echo "    URL:       https://traefik.${DOMAIN}"
+echo "    User:      admin"
+echo "    Passwort:  ${TRAEFIK_PASSWORD}"
+echo ""
+echo "  Naechste Schritte:"
+echo "    1. SMTP-Daten in secrets.env eintragen"
+echo "    2. HCLOUD_TOKEN in secrets.env eintragen (fuer Coder)"
+echo "    3. Documentation Stack starten:"
+echo "       ssh -i ${SSH_KEY_FILE} ${ADMIN_USER}@${SERVER_IP}"
+echo "       cd ${DEPLOY_DIR} && docker compose up -d"
+echo "    4. Services konfigurieren (siehe SPEC.md Abschnitt 20)"
+echo ""
+echo "  WICHTIG: secrets.env sicher aufbewahren (Passwort-Manager)!"
+echo "  Traefik-Passwort JETZT notieren — wird nicht erneut angezeigt."
+echo ""
+echo "============================================================================"
