@@ -383,7 +383,6 @@ remote "
     \"max-file\": \"3\"
   },
   \"live-restore\": true,
-  \"default-security-opt\": [\"no-new-privileges\"],
   \"userland-proxy\": false
 }
 DOCKERCFG
