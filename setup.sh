@@ -433,7 +433,11 @@ remote "
   if [ -d '${DEPLOY_DIR}/.git' ]; then
     cd '${DEPLOY_DIR}' && git pull
   else
-    git clone '${REPO_URL}' '${DEPLOY_DIR}'
+    cd '${DEPLOY_DIR}'
+    git init
+    git remote add origin '${REPO_URL}'
+    git fetch origin
+    git checkout -t origin/main
   fi
 "
 ok "Repository geklont."
