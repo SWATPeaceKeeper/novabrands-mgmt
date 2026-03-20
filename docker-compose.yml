@@ -123,7 +123,6 @@ services:
       OPENPROJECT_MAIL__FROM: ${SMTP_FROM}
     volumes:
       - op-assets:/var/openproject/assets
-      - ./openproject/smtp_initializer.rb:/app/config/initializers/smtp_override.rb:ro
     networks:
       - proxy
       - openproject-backend
