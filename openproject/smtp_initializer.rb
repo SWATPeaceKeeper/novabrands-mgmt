@@ -4,6 +4,8 @@ Rails.application.config.after_initialize do
   cfg = OpenProject::Configuration
   next unless cfg.email_delivery_method == :smtp
 
+  implicit_tls = cfg.smtp_port == 465
+
   ActionMailer::Base.delivery_method = :smtp
   ActionMailer::Base.smtp_settings = {
     address: cfg.smtp_address,
@@ -11,7 +13,8 @@ Rails.application.config.after_initialize do
     user_name: cfg.smtp_user_name,
     password: cfg.smtp_password,
     authentication: cfg.smtp_authentication.presence&.to_sym,
-    tls: cfg.smtp_port == 465,
-    enable_starttls_auto: cfg.smtp_port != 465
+    tls: implicit_tls,
+    enable_starttls: !implicit_tls,
+    enable_starttls_auto: false
   }.compact
 end
