@@ -318,6 +318,7 @@ services:
     image: redis:7.4.8-alpine
     container_name: nextcloud-redis
     restart: unless-stopped
+    user: redis
     security_opt:
       - no-new-privileges:true
     cap_drop:
