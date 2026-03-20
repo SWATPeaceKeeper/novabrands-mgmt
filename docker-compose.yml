@@ -119,11 +119,10 @@ services:
       OPENPROJECT_SMTP__USER__NAME: ${SMTP_USER}
       OPENPROJECT_SMTP__PASSWORD: ${SMTP_PASSWORD}
       OPENPROJECT_SMTP__AUTHENTICATION: login
-      OPENPROJECT_SMTP__ENABLE__STARTTLS__AUTO: "true"
+      OPENPROJECT_SMTP__ENABLE__STARTTLS__AUTO: "false"
       OPENPROJECT_MAIL__FROM: ${SMTP_FROM}
     volumes:
       - op-assets:/var/openproject/assets
-      - ./openproject/smtp_initializer.rb:/app/config/initializers/smtp_override.rb:ro
     networks:
       - proxy
       - openproject-backend
