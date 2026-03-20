@@ -120,6 +120,7 @@ services:
       OPENPROJECT_SMTP__PASSWORD: ${SMTP_PASSWORD}
       OPENPROJECT_SMTP__AUTHENTICATION: login
       OPENPROJECT_SMTP__ENABLE__STARTTLS__AUTO: "false"
+      OPENPROJECT_SMTP__OPENSSL__VERIFY__MODE: "none"
       OPENPROJECT_MAIL__FROM: ${SMTP_FROM}
     volumes:
       - op-assets:/var/openproject/assets
