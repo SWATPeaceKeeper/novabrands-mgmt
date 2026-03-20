@@ -11,6 +11,7 @@ Rails.application.config.after_initialize do
     user_name: cfg.smtp_user_name,
     password: cfg.smtp_password,
     authentication: cfg.smtp_authentication.presence&.to_sym,
-    enable_starttls_auto: cfg.smtp_enable_starttls_auto
+    tls: cfg.smtp_port == 465,
+    enable_starttls_auto: cfg.smtp_port != 465
   }.compact
 end
