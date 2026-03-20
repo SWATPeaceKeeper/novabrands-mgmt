@@ -109,7 +109,7 @@ services:
       OPENPROJECT_RAILS__CACHE__STORE: memcache
       OPENPROJECT_CACHE__MEMCACHE__SERVER: openproject-cache:11211
       OPENPROJECT_CACHE__NAMESPACE: openproject
-      DATABASE_URL: "postgres://${OP_DB_USER}:${OP_DB_PASSWORD}@openproject-db/${OP_DB_NAME}?pool=20&encoding=unicode&reconnect=true"
+      DATABASE_URL: "postgres://${OP_DB_USER}:${OP_DB_PASSWORD}@openproject-db/${OP_DB_NAME}"
       SECRET_KEY_BASE: ${OP_SECRET_KEY_BASE}
       RAILS_MIN_THREADS: ${OP_RAILS_MIN_THREADS:-4}
       RAILS_MAX_THREADS: ${OP_RAILS_MAX_THREADS:-16}
