@@ -371,8 +371,10 @@ services:
     image: collabora/code:25.04.9.3.1
     container_name: collabora
     restart: unless-stopped
-    security_opt:
-      - no-new-privileges:true
+    # no-new-privileges incompatible: Collabora needs setuid for sandboxed child processes
+    cap_add:
+      - MKNOD
+      - SYS_CHROOT
     environment:
       aliasgroup1: "https://${NC_HOSTNAME}:443"
       extra_params: "--o:ssl.enable=false --o:ssl.termination=true"
@@ -381,8 +383,6 @@ services:
       dictionaries: "de_DE en_US"
     networks:
       - proxy
-    cap_add:
-      - MKNOD
     deploy:
       resources:
         limits:
