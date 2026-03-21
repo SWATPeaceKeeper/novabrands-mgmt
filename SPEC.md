@@ -93,7 +93,8 @@ Dokumentations- und Projektmanagement-Stack fuer eine neu zu gruendende IT-Berat
           OpenProject <--- OAuth ---> Nextcloud
           Nextcloud -----> Lokaler NVMe-Speicher (nc-data Volume)
           Coder -----> Hetzner Cloud API (Workspace-VMs)
-          Coder -----> Docker auf festem Dev-Server (Container-Workspaces)
+          Coder -----> Lokaler Docker Socket (Container-Workspaces via coder-socket-proxy)
+          Coder -----> Docker auf festem Dev-Server (Container-Workspaces, optional)
 
           +------------------+
           | nextcloud-cron   |
@@ -107,6 +108,7 @@ Dokumentations- und Projektmanagement-Stack fuer eine neu zu gruendende IT-Berat
 |----------|-----|--------------------------|
 | `proxy` | extern | traefik, openproject, nextcloud, collabora, coder |
 | `socket-proxy` | intern | socket-proxy, traefik |
+| `coder-socket-proxy` | intern | coder-socket-proxy, coder |
 | `openproject-backend` | intern | openproject, openproject-db, openproject-cache |
 | `nextcloud-backend` | intern | nextcloud, nextcloud-db, nextcloud-redis, nextcloud-cron |
 | `coder-backend` | intern | coder, coder-db |
@@ -122,6 +124,7 @@ Collabora braucht kein eigenes Backend-Netzwerk — es kommuniziert ausschliessl
 | Container | Image | Version |
 |-----------|-------|---------|
 | `socket-proxy` | `tecnativa/docker-socket-proxy` | `0.3.0` |
+| `coder-socket-proxy` | `tecnativa/docker-socket-proxy` | `0.3.0` |
 | `traefik` | `traefik` | `v3.6.9` |
 | `openproject` | `openproject/openproject` | `17.2.1` |
 | `openproject-db` | `postgres` | `18.3-alpine` |
@@ -165,10 +168,11 @@ OpenProject 17.2 bringt Hocuspocus fuer Real-Time Document Collaboration mit. In
 
 | Container | Netzwerk(e) | Funktion |
 |-----------|-------------|----------|
-| `coder` | proxy, coder-backend | coderd Control Plane (Web-UI, API, built-in Provisioner) |
+| `coder` | proxy, coder-backend, coder-socket-proxy | coderd Control Plane (Web-UI, API, built-in Provisioner) |
+| `coder-socket-proxy` | coder-socket-proxy | Docker Socket Proxy (read/write fuer Container-Provisionierung) |
 | `coder-db` | coder-backend | PostgreSQL-Datenbank fuer Coder |
 
-Coder Workspaces laufen **nicht** auf diesem Server — sie werden per Terraform auf externen Hetzner-Cloud-VMs oder Docker-Containern provisioniert.
+Coder kann Workspaces sowohl auf **externen Hetzner-Cloud-VMs** als auch als **lokale Docker-Container** auf diesem Server provisionieren. Der Zugriff auf den lokalen Docker-Daemon erfolgt ueber einen dedizierten Socket-Proxy mit eingeschraenkten Berechtigungen (kein Zugriff auf Swarm, Services, Secrets).
 
 ---
 
@@ -189,10 +193,11 @@ Coder Workspaces laufen **nicht** auf diesem Server — sie werden per Terraform
 | **Exakte Image-Versionen** | Keine ueberraschenden Breaking Changes bei `docker compose pull` |
 | **Resource Limits** | Schutz vor OOM-Kill des gesamten Servers |
 | **Externer SMTP-Relay (Proton/SMTP2Go)** | Kein Wartungsaufwand fuer eigenen Mailserver |
-| **Coder nur Control Plane lokal** | Workspaces auf externen Servern, Management-Server bleibt schlank |
+| **Coder Control Plane + lokale Workspaces** | Control Plane lokal, Workspaces wahlweise lokal (Docker) oder extern (Hetzner Cloud VMs) |
 | **Coder eigene PostgreSQL** | Konsistent mit OP/NC, unabhaengige Wartung |
 | **Coder built-in Provisioner** | Einfach fuer 1-5 User, externer Provisioner spaeter nachruestbar |
-| **Zwei Workspace-Templates** | Hetzner-VMs (on-demand) + Docker-Container (fester Server) |
+| **Zwei Workspace-Templates** | Hetzner-VMs (on-demand) + lokale Docker-Container |
+| **Separater Socket-Proxy fuer Coder** | Traefik-Proxy bleibt read-only, Coder bekommt eigenen Proxy mit Schreibzugriff — Principle of Least Privilege |
 
 ---
 
@@ -647,11 +652,17 @@ Coder ist eine Open-Source-Plattform fuer standardisierte Remote-Entwicklungsumg
 |  + PostgreSQL              |  conn.   | - code-server / VS Code   |
 |  + Terraform (hcloud)      |          | - Dev-Tools, Repos        |
 |                            |          +---------------------------+
-|                            |          +---------------------------+
-|                            | <------> | Docker Dev-Server         |
-|                            |  Agent   | - Container-Workspaces    |
-|                            |  conn.   | - Coder Agent             |
-+----------------------------+          +---------------------------+
+|  coder-socket-proxy ----+  |
+|    (Docker Socket Proxy) |  |
+|    POST=1, read/write    |  |
+|         |                |  |
+|         v                |  |
+|  /var/run/docker.sock    |  |
+|         |                |  |
+|  Lokale Docker-Container |  |
+|  - Container-Workspaces  |  |
+|  - Coder Agent           |  |
++----------------------------+
 ```
 
 ### Container-Konfiguration
@@ -690,14 +701,18 @@ coder:
     CODER_HTTP_ADDRESS: "0.0.0.0:7080"
     CODER_ACCESS_URL: "https://${CODER_HOSTNAME:-coder.example.de}"
     CODER_WILDCARD_ACCESS_URL: ""
+    DOCKER_HOST: tcp://coder-socket-proxy:2375
     # Terraform/Hetzner fuer Workspace-Provisionierung
     HCLOUD_TOKEN: ${HCLOUD_TOKEN}
   networks:
     - proxy
     - coder-backend
+    - coder-socket-proxy
   depends_on:
     coder-db:
       condition: service_healthy
+    coder-socket-proxy:
+      condition: service_started
   deploy:
     resources:
       limits:
@@ -740,13 +755,14 @@ Erstellt eine dedizierte VM pro Workspace. Ideal fuer grosse Projekte oder wenn 
 - Eigenes Volume fuer persistente Daten
 - Community-Referenz: `ntimo/coder-hetzner-cloud-template`
 
-**Template 2: Docker-Container auf festem Server**
+**Template 2: Docker-Container lokal auf OVH RISE-S**
 
-Erstellt Container auf einem dedizierten Dev-Server. Ideal fuer schnelle Tasks oder wenn ein fester Server ohnehin laeuft.
+Erstellt Container direkt auf dem Management-Server. Ideal fuer schnelle Tasks und leichtgewichtige Workspaces.
 
-- Terraform Provider: `kreuzwerker/docker` (Remote-Docker-Host)
-- Geteilte Ressourcen, aber schnellerer Start
-- Guenstiger bei Dauernutzung
+- Terraform Provider: `kreuzwerker/docker`
+- Docker-Zugriff ueber `coder-socket-proxy` (DOCKER_HOST=tcp://coder-socket-proxy:2375)
+- Geteilte Ressourcen, aber schnellster Start (kein VM-Boot)
+- Keine Zusatzkosten — nutzt den vorhandenen Headroom des Dedicated Servers (64 GB RAM, ~55 GB frei)
 
 ### Workspace-Networking
 
@@ -802,9 +818,10 @@ services:
 | `nextcloud-redis` | 320 MB | 128 MB | Redis mit 256 MB maxmemory |
 | `nextcloud-cron` | 512 MB | 128 MB | Selbes Image, aber nur Cron-Tasks |
 | `collabora` | 1536 MB | 1024 MB | LibreOffice-Engine, speicherhungrig |
+| `coder-socket-proxy` | 64 MB | 32 MB | Docker Socket Proxy fuer Coder (read/write) |
 | `coder` | 1536 MB | 768 MB | coderd + built-in Provisioner + Terraform |
 | `coder-db` | 512 MB | 256 MB | PostgreSQL fuer Coder |
-| **Gesamt** | **~9.3 GB** | **~5.3 GB** | |
+| **Gesamt** | **~9.4 GB** | **~5.3 GB** | |
 
 Bei 64 GB Dedicated Server (OVH RISE-S) bleiben ~55 GB fuer OS, Traefik, andere Dienste und zukuenftige Erweiterungen (Jitsi, Mattermost, Whisper.cpp).
 
@@ -844,7 +861,14 @@ chown ubuntu:ubuntu /opt/containers/novabrands-mgmt/.env
 
 ### Docker-Socket (Pflicht)
 
-Traefik braucht Zugriff auf den Docker-Socket. Ein Docker Socket Proxy (z.B. `tecnativa/docker-socket-proxy` oder `wollomatic/socket-proxy`) ist **Pflicht**, um den Zugriff einzuschraenken. Der Docker-Socket ist root-equivalent Access — ohne Proxy hat ein kompromittierter Traefik-Container vollen Host-Zugriff. Konfiguration: nur GET-Requests erlauben, nur `/containers` und `/networks` Endpoints freigeben.
+Der Docker-Socket ist root-equivalent Access — ohne Proxy hat ein kompromittierter Container vollen Host-Zugriff. Deshalb nutzen wir **zwei getrennte Docker Socket Proxies** (`tecnativa/docker-socket-proxy`) mit unterschiedlichen Berechtigungen:
+
+| Proxy | Nutzer | POST | Berechtigungen | Netzwerk |
+|-------|--------|------|----------------|----------|
+| `socket-proxy` | Traefik | Nein | CONTAINERS, NETWORKS (read-only) | `socket-proxy` (intern) |
+| `coder-socket-proxy` | Coder | Ja | CONTAINERS, IMAGES, NETWORKS, VOLUMES, EXEC, INFO (read/write) | `coder-socket-proxy` (intern) |
+
+Traefik bekommt nur Lesezugriff. Coder benoetigt Schreibzugriff fuer die Container-Provisionierung, aber keinen Zugriff auf Swarm, Services oder Secrets. Beide Proxies laufen in isolierten internen Netzwerken.
 
 ---
 
@@ -1399,11 +1423,11 @@ docker network inspect proxy
 
 | Komponente | Limit | Reservation |
 |-----------|-------|-------------|
-| Dieser Stack (gesamt) | ~9.0 GB | ~5.1 GB |
+| Dieser Stack (gesamt) | ~9.4 GB | ~5.3 GB |
 | Andere Dienste (geschaetzt) | ~1.0 GB | ~0.5 GB |
 | OS + Docker Engine | ~0.5 GB | — |
-| **Gesamt belegt** | **~10.5 GB** | **~5.6 GB** |
-| **Frei verfuegbar** | **~53.5 GB** | |
+| **Gesamt belegt** | **~10.9 GB** | **~5.8 GB** |
+| **Frei verfuegbar** | **~53.1 GB** | |
 
 Massiver Headroom fuer zukuenftige Dienste (Jitsi, Mattermost, Whisper.cpp) und Lastspitzen.
 

@@ -9,6 +9,8 @@
 #
 # NETZWERKE:
 # - proxy:                Traefik -> oeffentliche Services
+# - socket-proxy:         Traefik <-> Docker Socket Proxy (read-only)
+# - coder-socket-proxy:   Coder <-> Docker Socket Proxy (read/write)
 # - openproject-backend:  OpenProject <-> PostgreSQL, Memcached
 # - nextcloud-backend:    Nextcloud <-> PostgreSQL, Redis
 # - coder-backend:        Coder <-> PostgreSQL
@@ -35,6 +37,36 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
       - socket-proxy
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+        reservations:
+          memory: 32M
+
+  # =========================================================================
+  # DOCKER SOCKET PROXY (Coder - read/write for container provisioning)
+  # =========================================================================
+  coder-socket-proxy:
+    image: tecnativa/docker-socket-proxy:0.3.0
+    container_name: coder-socket-proxy
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      CONTAINERS: 1
+      IMAGES: 1
+      NETWORKS: 1
+      VOLUMES: 1
+      EXEC: 1
+      INFO: 1
+      POST: 1
+      SERVICES: 0
+      TASKS: 0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - coder-socket-proxy
     deploy:
       resources:
         limits:
@@ -451,13 +483,17 @@ services:
       CODER_HTTP_ADDRESS: "0.0.0.0:7080"
       CODER_ACCESS_URL: "https://${CODER_HOSTNAME}"
       CODER_WILDCARD_ACCESS_URL: ""
+      DOCKER_HOST: tcp://coder-socket-proxy:2375
       HCLOUD_TOKEN: ${HCLOUD_TOKEN}
     networks:
       - proxy
       - coder-backend
+      - coder-socket-proxy
     depends_on:
       coder-db:
         condition: service_healthy
+      coder-socket-proxy:
+        condition: service_started
     deploy:
       resources:
         limits:
@@ -482,6 +518,9 @@ networks:
   proxy:
     external: true
   socket-proxy:
+    driver: bridge
+    internal: true
+  coder-socket-proxy:
     driver: bridge
     internal: true
   openproject-backend:
