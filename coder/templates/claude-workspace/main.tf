@@ -12,6 +12,10 @@ terraform {
 
 provider "docker" {}
 
+locals {
+  setup_script = file("setup.sh")
+}
+
 # ---------------------------------------------------------------------------
 # Data sources
 # ---------------------------------------------------------------------------
@@ -26,66 +30,85 @@ data "coder_task" "me" {}
 # ---------------------------------------------------------------------------
 
 data "coder_parameter" "system_prompt" {
-  name        = "system_prompt"
-  type        = "string"
-  form_type   = "textarea"
-  default     = ""
-  mutable     = false
-  description = "System prompt for Claude Code agent"
+  name         = "system_prompt"
+  display_name = "System Prompt"
+  type         = "string"
+  form_type    = "textarea"
+  default      = ""
+  mutable      = false
+  description  = "System prompt for Claude Code agent"
 }
 
 data "coder_parameter" "setup_script" {
-  name        = "setup_script"
-  type        = "string"
-  form_type   = "textarea"
-  default     = file("setup.sh")
-  mutable     = false
-  description = "Post-install script for tool setup"
+  name         = "setup_script"
+  display_name = "Setup Script"
+  type         = "string"
+  form_type    = "textarea"
+  default      = local.setup_script
+  mutable      = false
+  description  = "Post-install script for tool setup"
 }
 
 data "coder_parameter" "container_image" {
-  name        = "container_image"
-  type        = "string"
-  form_type   = "input"
-  default     = "codercom/example-universal:ubuntu"
-  mutable     = false
-  description = "Docker image for workspace"
+  name         = "container_image"
+  display_name = "Container Image"
+  type         = "string"
+  form_type    = "input"
+  default      = "codercom/example-universal:ubuntu"
+  mutable      = false
+  description  = "Docker image for workspace"
 }
 
 data "coder_parameter" "dotfiles_repo" {
-  name        = "dotfiles_repo"
-  type        = "string"
-  form_type   = "input"
-  default     = ""
-  mutable     = false
-  description = "Git URL for dotfiles repo (leave empty for clean workspace)"
+  name         = "dotfiles_repo"
+  display_name = "Dotfiles Repo"
+  type         = "string"
+  form_type    = "input"
+  default      = ""
+  mutable      = false
+  description  = "Git URL for dotfiles repo (leave empty for clean workspace)"
 }
 
 data "coder_parameter" "preview_port" {
-  name        = "preview_port"
-  type        = "number"
-  form_type   = "input"
-  default     = "8080"
-  mutable     = true
-  description = "Port for the preview app"
+  name         = "preview_port"
+  display_name = "Preview Port"
+  type         = "number"
+  form_type    = "input"
+  default      = "8080"
+  mutable      = false
+  description  = "Port for the preview app"
 }
 
 data "coder_parameter" "mem_limit_gb" {
-  name        = "mem_limit_gb"
-  type        = "number"
-  form_type   = "input"
-  default     = "8"
-  mutable     = false
-  description = "Memory limit in GB"
+  name         = "mem_limit_gb"
+  display_name = "Memory Limit (GB)"
+  type         = "number"
+  form_type    = "input"
+  default      = "8"
+  mutable      = false
+  description  = "Memory limit in GB"
+
+  validation {
+    min   = 1
+    max   = 48
+    error = "Memory must be between 1 and 48 GB"
+  }
 }
 
 data "coder_parameter" "cpu_weight" {
-  name        = "cpu_weight"
-  type        = "number"
-  form_type   = "input"
-  default     = "4"
-  mutable     = false
-  description = "Relative CPU priority (factor for cpu_shares)"
+  name         = "cpu_weight"
+  display_name = "CPU Weight"
+  type         = "number"
+  form_type    = "input"
+  default      = "4"
+  mutable      = false
+  description  = "Relative CPU priority (factor for cpu_shares)"
+
+  validation {
+    min   = 1
+    max   = 16
+    error = "CPU weight must be between 1 and 16"
+  }
 }
 
 # ---------------------------------------------------------------------------
@@ -97,7 +120,7 @@ data "coder_workspace_preset" "dev_machine" {
   default = true
   parameters = {
     system_prompt   = ""
-    setup_script    = file("setup.sh")
+    setup_script    = local.setup_script
     container_image = "codercom/example-universal:ubuntu"
     dotfiles_repo   = ""
     preview_port    = "8080"
@@ -127,7 +150,7 @@ data "coder_workspace_preset" "devops_task" {
       - Security: never hardcode secrets, use env vars
       - German responses, English code/commits
     EOT
-    setup_script    = file("setup.sh")
+    setup_script    = local.setup_script
     container_image = "codercom/example-universal:ubuntu"
     dotfiles_repo   = ""
     preview_port    = "8080"
@@ -140,7 +163,7 @@ data "coder_workspace_preset" "clean" {
   name = "Clean Workspace"
   parameters = {
     system_prompt   = ""
-    setup_script    = file("setup.sh")
+    setup_script    = local.setup_script
     container_image = "codercom/example-universal:ubuntu"
     dotfiles_repo   = ""
     preview_port    = "8080"
@@ -314,6 +337,13 @@ resource "docker_container" "workspace" {
   env        = ["CODER_AGENT_TOKEN=${coder_agent.main.token}"]
   memory     = data.coder_parameter.mem_limit_gb.value * 1024 * 1024 * 1024
   cpu_shares = data.coder_parameter.cpu_weight.value * 1024
+
+  # Security hardening
+  security_opts = ["no-new-privileges:true"]
+  cap_drop      = ["ALL"]
+  pids_limit    = 512
+  memory_swap   = data.coder_parameter.mem_limit_gb.value * 1024 * 1024 * 1024
+
   host {
     host = "host.docker.internal"
     ip   = "host-gateway"
