@@ -340,9 +340,10 @@ resource "docker_container" "workspace" {
 
   # Security hardening
   security_opts = ["no-new-privileges:true"]
-  cap_drop      = ["ALL"]
-  pids_limit    = 512
   memory_swap   = data.coder_parameter.mem_limit_gb.value * 1024 * 1024 * 1024
+  capabilities {
+    drop = ["ALL"]
+  }
 
   host {
     host = "host.docker.internal"
