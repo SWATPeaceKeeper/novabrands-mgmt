@@ -338,12 +338,11 @@ resource "docker_container" "workspace" {
   memory     = data.coder_parameter.mem_limit_gb.value * 1024 * 1024 * 1024
   cpu_shares = data.coder_parameter.cpu_weight.value * 1024
 
-  # Security hardening
-  security_opts = ["no-new-privileges:true"]
-  memory_swap   = data.coder_parameter.mem_limit_gb.value * 1024 * 1024 * 1024
-  capabilities {
-    drop = ["ALL"]
-  }
+  # Resource limits and swap prevention
+  memory_swap = data.coder_parameter.mem_limit_gb.value * 1024 * 1024 * 1024
+  # NOTE: no-new-privileges and cap_drop are omitted because the workspace
+  # needs sudo for tool installation (apt-get, binary installs to /usr/local/bin)
+  # and the Coder agentapi module uses sudo internally.
 
   host {
     host = "host.docker.internal"
