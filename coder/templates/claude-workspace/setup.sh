@@ -71,6 +71,36 @@ install_tools() {
 	echo "==> Installing Helm..."
 	curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 
+	echo "==> Installing hcloud CLI..."
+	if ! command -v hcloud >/dev/null 2>&1; then
+		local hcloud_version
+		hcloud_version=$(
+			wget -qO- https://api.github.com/repos/hetznercloud/cli/releases/latest |
+				jq -r '.tag_name' | sed 's/^v//'
+		)
+		[[ -n "$hcloud_version" ]] || {
+			echo "ERROR: Failed to resolve hcloud version"
+			exit 1
+		}
+		wget -qO /tmp/hcloud.tar.gz \
+			"https://github.com/hetznercloud/cli/releases/download/v${hcloud_version}/hcloud-linux-amd64.tar.gz"
+		sudo tar xzf /tmp/hcloud.tar.gz -C /usr/local/bin hcloud
+		rm -f /tmp/hcloud.tar.gz
+	fi
+
+	echo "==> Installing wrangler (Cloudflare)..."
+	npm install -g wrangler
+
+	echo "==> Installing RTK (context compression)..."
+	curl -fsSL https://raw.githubusercontent.com/rtk-ai/rtk/refs/heads/master/install.sh | sh
+	export PATH="$HOME/.local/bin:$PATH"
+	if command -v rtk >/dev/null 2>&1; then
+		rtk init --global 2>/dev/null || true
+	fi
+
+	echo "==> Installing GitNexus..."
+	npm install -g gitnexus
+
 	touch "$MARKER"
 	echo "==> Tool installation complete (marker: ${MARKER})"
 }
@@ -95,6 +125,40 @@ apply_dotfiles() {
 	fi
 }
 
+configure_mcp_servers() {
+	if ! command -v claude >/dev/null 2>&1; then
+		echo "==> Claude Code not found, skipping MCP configuration."
+		return
+	fi
+
+	MCP_MARKER="$HOME/.coder-mcp-configured"
+	if [[ -f "$MCP_MARKER" ]]; then
+		echo "==> MCP servers already configured, skipping."
+		return
+	fi
+
+	echo "==> Configuring MCP servers..."
+
+	# Exa AI (web search) — requires EXA_API_KEY env var
+	if [[ -n "${EXA_API_KEY:-}" ]]; then
+		claude mcp add exa -- npx -y @anthropic-ai/exa-mcp-server 2>/dev/null || true
+	fi
+
+	# context7 (documentation lookup)
+	claude mcp add context7 -- npx -y @upstash/context7-mcp@latest 2>/dev/null || true
+
+	# Coder (workspace management)
+	claude mcp add coder -- coder exp mcp server 2>/dev/null || true
+
+	# GitNexus (code knowledge graph)
+	if command -v gitnexus >/dev/null 2>&1; then
+		claude mcp add gitnexus -- gitnexus mcp 2>/dev/null || true
+	fi
+
+	touch "$MCP_MARKER"
+	echo "==> MCP server configuration complete."
+}
+
 # --- Main ---
 
 if [[ -f "$MARKER" ]]; then
@@ -104,3 +168,4 @@ else
 fi
 
 apply_dotfiles
+configure_mcp_servers

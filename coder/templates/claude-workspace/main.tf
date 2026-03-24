@@ -69,13 +69,23 @@ data "coder_parameter" "dotfiles_repo" {
   description  = "Git URL for dotfiles repo (leave empty for clean workspace)"
 }
 
+data "coder_parameter" "workdir" {
+  name         = "workdir"
+  display_name = "Working Directory"
+  type         = "string"
+  form_type    = "input"
+  default      = "/home/coder/projects"
+  mutable      = true
+  description  = "Start directory for Claude Code (e.g. /home/coder/projects/my-repo)"
+}
+
 data "coder_parameter" "preview_port" {
   name         = "preview_port"
   display_name = "Preview Port"
   type         = "number"
   form_type    = "input"
   default      = "8080"
-  mutable      = false
+  mutable      = true
   description  = "Port for the preview app"
 }
 
@@ -111,6 +121,41 @@ data "coder_parameter" "cpu_weight" {
   }
 }
 
+# --- Sensitive parameters (API keys) ---
+
+data "coder_parameter" "exa_api_key" {
+  name         = "exa_api_key"
+  display_name = "Exa AI API Key"
+  type         = "string"
+  form_type    = "input"
+  default      = ""
+  mutable      = true
+  description  = "API key for Exa AI MCP server (leave empty to skip)"
+  ephemeral    = true
+}
+
+data "coder_parameter" "hcloud_api_token" {
+  name         = "hcloud_api_token"
+  display_name = "Hetzner Cloud Token"
+  type         = "string"
+  form_type    = "input"
+  default      = ""
+  mutable      = true
+  description  = "Hetzner Cloud API token for hcloud CLI"
+  ephemeral    = true
+}
+
+data "coder_parameter" "cloudflare_api_token" {
+  name         = "cloudflare_api_token"
+  display_name = "Cloudflare API Token"
+  type         = "string"
+  form_type    = "input"
+  default      = ""
+  mutable      = true
+  description  = "Cloudflare API token for wrangler CLI"
+  ephemeral    = true
+}
+
 # ---------------------------------------------------------------------------
 # Presets
 # ---------------------------------------------------------------------------
@@ -122,6 +167,7 @@ data "coder_workspace_preset" "dev_machine" {
     system_prompt   = ""
     setup_script    = local.setup_script
     container_image = "codercom/example-universal:ubuntu"
+    workdir         = "/home/coder/projects"
     preview_port    = "8080"
     mem_limit_gb    = "16"
     cpu_weight      = "8"
@@ -139,8 +185,10 @@ data "coder_workspace_preset" "devops_task" {
 
       -- Environment --
       - Linux x86_64 container on OVH RISE-S (Ryzen 9700X, 64 GB RAM)
-      - Tools: terraform, kubectl, helm, gh, rg, fd, jq, shellcheck, shfmt, uv, ruff, python, node, go, rust
-      - Working directory: /home/coder/projects
+      - Tools: terraform, kubectl, helm, gh, rg, fd, jq, shellcheck, shfmt,
+        uv, ruff, hcloud, wrangler, docker, python, node, go, rust
+      - Docker access via host socket (docker build/compose/run available)
+      - Working directory: set via workdir parameter
       - Git identity is pre-configured from Coder account
 
       -- Guidelines --
@@ -151,6 +199,7 @@ data "coder_workspace_preset" "devops_task" {
     EOT
     setup_script    = local.setup_script
     container_image = "codercom/example-universal:ubuntu"
+    workdir         = "/home/coder/projects"
     preview_port    = "8080"
     mem_limit_gb    = "8"
     cpu_weight      = "4"
@@ -163,6 +212,7 @@ data "coder_workspace_preset" "clean" {
     system_prompt   = ""
     setup_script    = local.setup_script
     container_image = "codercom/example-universal:ubuntu"
+    workdir         = "/home/coder/projects"
     preview_port    = "8080"
     mem_limit_gb    = "4"
     cpu_weight      = "2"
@@ -187,13 +237,13 @@ module "claude-code" {
   source              = "registry.coder.com/coder/claude-code/coder"
   version             = "4.8.1"
   agent_id            = coder_agent.main.id
-  workdir             = "/home/coder/projects"
+  workdir             = data.coder_parameter.workdir.value
   order               = 999
   claude_api_key      = ""
   ai_prompt           = data.coder_task.me.prompt
   system_prompt       = data.coder_parameter.system_prompt.value
   model               = "sonnet"
-  permission_mode     = "plan"
+  permission_mode     = "bypassPermissions"
   post_install_script = data.coder_parameter.setup_script.value
 }
 
@@ -206,7 +256,7 @@ module "code-server" {
   source   = "registry.coder.com/coder/code-server/coder"
   version  = "~> 1.0"
   agent_id = coder_agent.main.id
-  folder   = "/home/coder/projects"
+  folder   = data.coder_parameter.workdir.value
   order    = 1
   settings = {
     "workbench.colorTheme" = "Default Dark Modern"
@@ -229,11 +279,15 @@ resource "coder_agent" "main" {
     mkdir -p /home/coder/projects
   EOT
   env = {
-    GIT_AUTHOR_NAME     = coalesce(data.coder_workspace_owner.me.full_name, data.coder_workspace_owner.me.name)
-    GIT_AUTHOR_EMAIL    = data.coder_workspace_owner.me.email
-    GIT_COMMITTER_NAME  = coalesce(data.coder_workspace_owner.me.full_name, data.coder_workspace_owner.me.name)
-    GIT_COMMITTER_EMAIL = data.coder_workspace_owner.me.email
-    DOTFILES_REPO       = data.coder_parameter.dotfiles_repo.value
+    GIT_AUTHOR_NAME      = coalesce(data.coder_workspace_owner.me.full_name, data.coder_workspace_owner.me.name)
+    GIT_AUTHOR_EMAIL     = data.coder_workspace_owner.me.email
+    GIT_COMMITTER_NAME   = coalesce(data.coder_workspace_owner.me.full_name, data.coder_workspace_owner.me.name)
+    GIT_COMMITTER_EMAIL  = data.coder_workspace_owner.me.email
+    DOTFILES_REPO        = data.coder_parameter.dotfiles_repo.value
+    DOCKER_HOST          = "unix:///var/run/docker.sock"
+    HCLOUD_TOKEN         = data.coder_parameter.hcloud_api_token.value
+    CLOUDFLARE_API_TOKEN = data.coder_parameter.cloudflare_api_token.value
+    EXA_API_KEY          = data.coder_parameter.exa_api_key.value
   }
 
   metadata {
@@ -345,10 +399,16 @@ resource "docker_container" "workspace" {
     host = "host.docker.internal"
     ip   = "host-gateway"
   }
+  # Persistent home directory
   volumes {
     container_path = "/home/coder"
     volume_name    = docker_volume.home_volume.name
     read_only      = false
+  }
+  # Host Docker socket for docker build/compose/run
+  volumes {
+    host_path      = "/var/run/docker.sock"
+    container_path = "/var/run/docker.sock"
   }
   labels {
     label = "coder.owner"
