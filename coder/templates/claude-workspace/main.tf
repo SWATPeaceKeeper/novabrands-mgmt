@@ -65,7 +65,7 @@ data "coder_parameter" "dotfiles_repo" {
   type         = "string"
   form_type    = "input"
   default      = ""
-  mutable      = false
+  mutable      = true
   description  = "Git URL for dotfiles repo (leave empty for clean workspace)"
 }
 
