@@ -122,7 +122,6 @@ data "coder_workspace_preset" "dev_machine" {
     system_prompt   = ""
     setup_script    = local.setup_script
     container_image = "codercom/example-universal:ubuntu"
-    dotfiles_repo   = ""
     preview_port    = "8080"
     mem_limit_gb    = "16"
     cpu_weight      = "8"
@@ -152,7 +151,6 @@ data "coder_workspace_preset" "devops_task" {
     EOT
     setup_script    = local.setup_script
     container_image = "codercom/example-universal:ubuntu"
-    dotfiles_repo   = ""
     preview_port    = "8080"
     mem_limit_gb    = "8"
     cpu_weight      = "4"
@@ -165,7 +163,6 @@ data "coder_workspace_preset" "clean" {
     system_prompt   = ""
     setup_script    = local.setup_script
     container_image = "codercom/example-universal:ubuntu"
-    dotfiles_repo   = ""
     preview_port    = "8080"
     mem_limit_gb    = "4"
     cpu_weight      = "2"
