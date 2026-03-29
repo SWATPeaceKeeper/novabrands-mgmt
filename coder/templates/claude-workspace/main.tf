@@ -156,6 +156,29 @@ data "coder_parameter" "cloudflare_api_token" {
   ephemeral    = true
 }
 
+data "coder_parameter" "cloudflare_api_token" {
+  name         = "cloudflare_api_token"
+  display_name = "Cloudflare API Token"
+  type         = "string"
+  form_type    = "input"
+  default      = ""
+  mutable      = true
+  description  = "Cloudflare API token for wrangler CLI"
+  ephemeral    = true
+}
+
+data "coder_parameter" "claude_code_oauth_token" {
+  name         = "claude_code_oauth_token"
+  display_name = "Claude Code OAuth Token"
+  type         = "string"
+  form_type    = "input"
+  default      = ""
+  mutable      = true
+  description  = "Generate one using `claude setup-token` command"
+  ephemeral    = true
+}
+
+
 # ---------------------------------------------------------------------------
 # Presets
 # ---------------------------------------------------------------------------
@@ -239,12 +262,11 @@ module "claude-code" {
   agent_id            = coder_agent.main.id
   workdir             = data.coder_parameter.workdir.value
   order               = 999
-  claude_api_key      = ""
   ai_prompt           = data.coder_task.me.prompt
   system_prompt       = data.coder_parameter.system_prompt.value
-  model               = "sonnet"
   permission_mode     = "bypassPermissions"
   post_install_script = data.coder_parameter.setup_script.value
+  claude_code_oauth_token = data.coder_parameter.claude_code_oauth_token.value
 }
 
 # ---------------------------------------------------------------------------
