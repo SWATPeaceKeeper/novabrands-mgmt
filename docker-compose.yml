@@ -85,6 +85,8 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    environment:
+      CF_DNS_API_TOKEN: ${CF_DNS_API_TOKEN}
     depends_on:
       - socket-proxy
     ports:
@@ -482,7 +484,7 @@ services:
       CODER_PG_CONNECTION_URL: "postgresql://${CODER_DB_USER:-coder}:${CODER_DB_PASSWORD}@coder-db/${CODER_DB_NAME:-coder}?sslmode=disable"
       CODER_HTTP_ADDRESS: "0.0.0.0:7080"
       CODER_ACCESS_URL: "https://${CODER_HOSTNAME}"
-      CODER_WILDCARD_ACCESS_URL: ""
+      CODER_WILDCARD_ACCESS_URL: "*.coder.novabrands.org"
       DOCKER_HOST: tcp://coder-socket-proxy:2375
       HCLOUD_TOKEN: ${HCLOUD_TOKEN}
       CODER_EXTERNAL_AUTH_0_ID: ${CODER_EXTERNAL_AUTH_0_ID:-github}
@@ -512,6 +514,14 @@ services:
       - "traefik.http.routers.coder.tls.certresolver=letsencrypt"
       - "traefik.http.services.coder.loadbalancer.server.port=7080"
       - "traefik.http.routers.coder.middlewares=coder-headers"
+      # Wildcard router for subdomain apps (code-server, filebrowser, etc.)
+      - "traefik.http.routers.coder-wildcard.rule=HostRegexp(`{subdomain:[a-z0-9-]+}.${CODER_HOSTNAME}`)"
+      - "traefik.http.routers.coder-wildcard.entrypoints=websecure"
+      - "traefik.http.routers.coder-wildcard.tls.certresolver=letsencrypt-dns"
+      - "traefik.http.routers.coder-wildcard.tls.domains[0].main=${CODER_HOSTNAME}"
+      - "traefik.http.routers.coder-wildcard.tls.domains[0].sans=*.${CODER_HOSTNAME}"
+      - "traefik.http.routers.coder-wildcard.service=coder"
+      - "traefik.http.routers.coder-wildcard.middlewares=coder-headers"
       - "traefik.http.middlewares.coder-headers.headers.customRequestHeaders.X-Forwarded-Proto=https"
       - "traefik.http.middlewares.coder-headers.headers.stsSeconds=31536000"
 

@@ -237,6 +237,34 @@ resource "coder_agent" "main" {
     interval     = 60
     timeout      = 1
   }
+  metadata {
+    display_name = "CPU Usage (Host)"
+    key          = "3_cpu_usage_host"
+    script       = "coder stat cpu --host"
+    interval     = 10
+    timeout      = 1
+  }
+  metadata {
+    display_name = "Memory Usage (Host)"
+    key          = "4_mem_usage_host"
+    script       = "coder stat mem --host"
+    interval     = 10
+    timeout      = 1
+  }
+  metadata {
+    display_name = "Load Average (Host)"
+    key          = "5_load_avg_host"
+    script       = "echo \"`cat /proc/loadavg | awk '{ print $1 }'` `nproc`\" | awk '{ printf \"%0.2f\", $1/$2 }'"
+    interval     = 60
+    timeout      = 1
+  }
+  metadata {
+    display_name = "Swap Usage (Host)"
+    key          = "6_swap_usage_host"
+    script       = "free -b | awk '/^Swap/ { printf(\"%.1f/%.1f\", $3/1024.0/1024.0/1024.0, $2/1024.0/1024.0/1024.0) }'"
+    interval     = 10
+    timeout      = 1
+  }
 }
 
 # ---------------------------------------------------------------------------

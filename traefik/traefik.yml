@@ -54,6 +54,15 @@ certificatesResolvers:
       storage: /etc/traefik/certs/acme.json
       httpChallenge:
         entryPoint: web
+  letsencrypt-dns:
+    acme:
+      email: admin@novabrands.org
+      storage: /etc/traefik/certs/acme-dns.json
+      dnsChallenge:
+        provider: cloudflare
+        resolvers:
+          - "1.1.1.1:53"
+          - "8.8.8.8:53"
 
 # -----------------------------------------------------------------------------
 # TLS HARDENING
