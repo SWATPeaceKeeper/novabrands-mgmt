@@ -2,7 +2,7 @@ terraform {
   required_providers {
     coder = {
       source  = "coder/coder"
-      version = ">= 2.13"
+      version = ">= 2.29"
     }
     docker = {
       source = "kreuzwerker/docker"
@@ -12,10 +12,6 @@ terraform {
 
 provider "docker" {}
 
-locals {
-  setup_script = file("setup.sh")
-}
-
 # ---------------------------------------------------------------------------
 # Data sources
 # ---------------------------------------------------------------------------
@@ -23,60 +19,23 @@ locals {
 data "coder_provisioner" "me" {}
 data "coder_workspace" "me" {}
 data "coder_workspace_owner" "me" {}
-data "coder_task" "me" {}
+
+data "coder_external_auth" "github" {
+  id = "github"
+}
 
 # ---------------------------------------------------------------------------
 # Parameters
 # ---------------------------------------------------------------------------
 
-data "coder_parameter" "system_prompt" {
-  name         = "system_prompt"
-  display_name = "System Prompt"
-  type         = "string"
-  form_type    = "textarea"
-  default      = ""
-  mutable      = false
-  description  = "System prompt for Claude Code agent"
-}
-
-data "coder_parameter" "setup_script" {
-  name         = "setup_script"
-  display_name = "Setup Script"
-  type         = "string"
-  form_type    = "textarea"
-  default      = local.setup_script
-  mutable      = false
-  description  = "Post-install script for tool setup"
-}
-
-data "coder_parameter" "container_image" {
-  name         = "container_image"
-  display_name = "Container Image"
-  type         = "string"
-  form_type    = "input"
-  default      = "codercom/example-universal:ubuntu"
-  mutable      = false
-  description  = "Docker image for workspace"
-}
-
-data "coder_parameter" "dotfiles_repo" {
-  name         = "dotfiles_repo"
-  display_name = "Dotfiles Repo"
+data "coder_parameter" "repo_url" {
+  name         = "repo_url"
+  display_name = "Repository URL"
   type         = "string"
   form_type    = "input"
   default      = ""
   mutable      = true
-  description  = "Git URL for dotfiles repo (leave empty for clean workspace)"
-}
-
-data "coder_parameter" "workdir" {
-  name         = "workdir"
-  display_name = "Working Directory"
-  type         = "string"
-  form_type    = "input"
-  default      = "/home/coder/projects"
-  mutable      = true
-  description  = "Start directory for Claude Code (e.g. /home/coder/projects/my-repo)"
+  description  = "Git repository URL to clone on startup (leave empty to skip)"
 }
 
 data "coder_parameter" "preview_port" {
@@ -97,11 +56,10 @@ data "coder_parameter" "mem_limit_gb" {
   default      = "8"
   mutable      = false
   description  = "Memory limit in GB"
-
   validation {
-    min   = 1
+    min   = 2
     max   = 48
-    error = "Memory must be between 1 and 48 GB"
+    error = "Memory must be between 2 and 48 GB"
   }
 }
 
@@ -113,7 +71,6 @@ data "coder_parameter" "cpu_weight" {
   default      = "4"
   mutable      = false
   description  = "Relative CPU priority (factor for cpu_shares)"
-
   validation {
     min   = 1
     max   = 16
@@ -121,16 +78,16 @@ data "coder_parameter" "cpu_weight" {
   }
 }
 
-# --- Sensitive parameters (API keys) ---
+# --- Ephemeral API keys ---
 
-data "coder_parameter" "exa_api_key" {
-  name         = "exa_api_key"
-  display_name = "Exa AI API Key"
+data "coder_parameter" "claude_code_oauth_token" {
+  name         = "claude_code_oauth_token"
+  display_name = "Claude Code OAuth Token"
   type         = "string"
   form_type    = "input"
   default      = ""
   mutable      = true
-  description  = "API key for Exa AI MCP server (leave empty to skip)"
+  description  = "Generate via claude setup-token (leave empty to login interactively)"
   ephemeral    = true
 }
 
@@ -156,29 +113,6 @@ data "coder_parameter" "cloudflare_api_token" {
   ephemeral    = true
 }
 
-data "coder_parameter" "cloudflare_api_token" {
-  name         = "cloudflare_api_token"
-  display_name = "Cloudflare API Token"
-  type         = "string"
-  form_type    = "input"
-  default      = ""
-  mutable      = true
-  description  = "Cloudflare API token for wrangler CLI"
-  ephemeral    = true
-}
-
-data "coder_parameter" "claude_code_oauth_token" {
-  name         = "claude_code_oauth_token"
-  display_name = "Claude Code OAuth Token"
-  type         = "string"
-  form_type    = "input"
-  default      = ""
-  mutable      = true
-  description  = "Generate one using `claude setup-token` command"
-  ephemeral    = true
-}
-
-
 # ---------------------------------------------------------------------------
 # Presets
 # ---------------------------------------------------------------------------
@@ -187,102 +121,78 @@ data "coder_workspace_preset" "dev_machine" {
   name    = "Dev Machine"
   default = true
   parameters = {
-    system_prompt   = ""
-    setup_script    = local.setup_script
-    container_image = "codercom/example-universal:ubuntu"
-    workdir         = "/home/coder/projects"
-    preview_port    = "8080"
-    mem_limit_gb    = "16"
-    cpu_weight      = "8"
-  }
-}
-
-data "coder_workspace_preset" "devops_task" {
-  name = "DevOps Task"
-  parameters = {
-    system_prompt   = <<-EOT
-      -- Framing --
-      You are a DevOps/Cloud engineer assistant running inside a Coder Workspace.
-      You provide status updates via Coder MCP. Stay on track, debug freely,
-      but when your approach fails, check with the user before switching strategy.
-
-      -- Environment --
-      - Linux x86_64 container on OVH RISE-S (Ryzen 9700X, 64 GB RAM)
-      - Tools: terraform, kubectl, helm, gh, rg, fd, jq, shellcheck, shfmt,
-        uv, ruff, hcloud, wrangler, docker, python, node, go, rust
-      - Docker access via host socket (docker build/compose/run available)
-      - Working directory: set via workdir parameter
-      - Git identity is pre-configured from Coder account
-
-      -- Guidelines --
-      - Follow the project's CLAUDE.md if present
-      - Conventional Commits, feature branches, no push to main
-      - Security: never hardcode secrets, use env vars
-      - German responses, English code/commits
-    EOT
-    setup_script    = local.setup_script
-    container_image = "codercom/example-universal:ubuntu"
-    workdir         = "/home/coder/projects"
-    preview_port    = "8080"
-    mem_limit_gb    = "8"
-    cpu_weight      = "4"
+    repo_url     = ""
+    preview_port = "8080"
+    mem_limit_gb = "16"
+    cpu_weight   = "8"
   }
 }
 
 data "coder_workspace_preset" "clean" {
   name = "Clean Workspace"
   parameters = {
-    system_prompt   = ""
-    setup_script    = local.setup_script
-    container_image = "codercom/example-universal:ubuntu"
-    workdir         = "/home/coder/projects"
-    preview_port    = "8080"
-    mem_limit_gb    = "4"
-    cpu_weight      = "2"
+    repo_url     = ""
+    preview_port = "8080"
+    mem_limit_gb = "4"
+    cpu_weight   = "2"
   }
 }
 
 # ---------------------------------------------------------------------------
-# AI Task
+# Official Modules
 # ---------------------------------------------------------------------------
 
-resource "coder_ai_task" "task" {
-  count  = data.coder_workspace.me.start_count
-  app_id = module.claude-code[count.index].task_app_id
+module "git-config" {
+  count    = data.coder_workspace.me.start_count
+  source   = "registry.coder.com/coder/git-config/coder"
+  version  = "1.0.33"
+  agent_id = coder_agent.main.id
 }
 
-# ---------------------------------------------------------------------------
-# Claude Code module
-# ---------------------------------------------------------------------------
+module "dotfiles" {
+  count    = data.coder_workspace.me.start_count
+  source   = "registry.coder.com/coder/dotfiles/coder"
+  version  = "1.4.1"
+  agent_id = coder_agent.main.id
+}
+
+module "git-clone" {
+  count    = data.coder_workspace.me.start_count != 0 && data.coder_parameter.repo_url.value != "" ? 1 : 0
+  source   = "registry.coder.com/coder/git-clone/coder"
+  version  = "1.2.3"
+  agent_id = coder_agent.main.id
+  url      = data.coder_parameter.repo_url.value
+  base_dir = "/home/coder"
+}
 
 module "claude-code" {
-  count               = data.coder_workspace.me.start_count
-  source              = "registry.coder.com/coder/claude-code/coder"
-  version             = "4.8.1"
-  agent_id            = coder_agent.main.id
-  workdir             = data.coder_parameter.workdir.value
-  order               = 999
-  ai_prompt           = data.coder_task.me.prompt
-  system_prompt       = data.coder_parameter.system_prompt.value
-  permission_mode     = "bypassPermissions"
-  post_install_script = data.coder_parameter.setup_script.value
+  count                   = data.coder_workspace.me.start_count
+  source                  = "registry.coder.com/coder/claude-code/coder"
+  version                 = "4.8.2"
+  agent_id                = coder_agent.main.id
+  workdir                 = try(module.git-clone[0].repo_dir, "/home/coder")
+  order                   = 999
   claude_code_oauth_token = data.coder_parameter.claude_code_oauth_token.value
 }
-
-# ---------------------------------------------------------------------------
-# Code Server module
-# ---------------------------------------------------------------------------
 
 module "code-server" {
   count    = data.coder_workspace.me.start_count
   source   = "registry.coder.com/coder/code-server/coder"
-  version  = "~> 1.0"
+  version  = "1.4.3"
   agent_id = coder_agent.main.id
-  folder   = data.coder_parameter.workdir.value
+  folder   = try(module.git-clone[0].repo_dir, "/home/coder")
   order    = 1
   settings = {
     "workbench.colorTheme" = "Default Dark Modern"
   }
+}
+
+module "filebrowser" {
+  count    = data.coder_workspace.me.start_count
+  source   = "registry.coder.com/coder/filebrowser/coder"
+  version  = "1.1.4"
+  agent_id = coder_agent.main.id
+  order    = 2
 }
 
 # ---------------------------------------------------------------------------
@@ -298,18 +208,12 @@ resource "coder_agent" "main" {
       cp -rT /etc/skel ~
       touch ~/.init_done
     fi
-    mkdir -p /home/coder/projects
   EOT
   env = {
-    GIT_AUTHOR_NAME      = coalesce(data.coder_workspace_owner.me.full_name, data.coder_workspace_owner.me.name)
-    GIT_AUTHOR_EMAIL     = data.coder_workspace_owner.me.email
-    GIT_COMMITTER_NAME   = coalesce(data.coder_workspace_owner.me.full_name, data.coder_workspace_owner.me.name)
-    GIT_COMMITTER_EMAIL  = data.coder_workspace_owner.me.email
-    DOTFILES_REPO        = data.coder_parameter.dotfiles_repo.value
+    GITHUB_TOKEN         = data.coder_external_auth.github.access_token
     DOCKER_HOST          = "unix:///var/run/docker.sock"
     HCLOUD_TOKEN         = data.coder_parameter.hcloud_api_token.value
     CLOUDFLARE_API_TOKEN = data.coder_parameter.cloudflare_api_token.value
-    EXA_API_KEY          = data.coder_parameter.exa_api_key.value
   }
 
   metadata {
@@ -319,7 +223,6 @@ resource "coder_agent" "main" {
     interval     = 10
     timeout      = 1
   }
-
   metadata {
     display_name = "RAM Usage"
     key          = "1_ram_usage"
@@ -327,44 +230,11 @@ resource "coder_agent" "main" {
     interval     = 10
     timeout      = 1
   }
-
   metadata {
     display_name = "Home Disk"
     key          = "2_home_disk"
     script       = "coder stat disk --path $${HOME}"
     interval     = 60
-    timeout      = 1
-  }
-
-  metadata {
-    display_name = "CPU Usage (Host)"
-    key          = "3_cpu_usage_host"
-    script       = "coder stat cpu --host"
-    interval     = 10
-    timeout      = 1
-  }
-
-  metadata {
-    display_name = "Memory Usage (Host)"
-    key          = "4_mem_usage_host"
-    script       = "coder stat mem --host"
-    interval     = 10
-    timeout      = 1
-  }
-
-  metadata {
-    display_name = "Load Average (Host)"
-    key          = "5_load_avg_host"
-    script       = "echo \"`cat /proc/loadavg | awk '{ print $1 }'` `nproc`\" | awk '{ printf \"%0.2f\", $1/$2 }'"
-    interval     = 60
-    timeout      = 1
-  }
-
-  metadata {
-    display_name = "Swap Usage (Host)"
-    key          = "6_swap_usage_host"
-    script       = "free -b | awk '/^Swap/ { printf(\"%.1f/%.1f\", $3/1024.0/1024.0/1024.0, $2/1024.0/1024.0/1024.0) }'"
-    interval     = 10
     timeout      = 1
   }
 }
@@ -390,10 +260,6 @@ resource "docker_volume" "home_volume" {
     label = "coder.workspace_id"
     value = data.coder_workspace.me.id
   }
-  labels {
-    label = "coder.workspace_name_at_creation"
-    value = data.coder_workspace.me.name
-  }
 }
 
 # ---------------------------------------------------------------------------
@@ -401,37 +267,31 @@ resource "docker_volume" "home_volume" {
 # ---------------------------------------------------------------------------
 
 resource "docker_container" "workspace" {
-  count      = data.coder_workspace.me.start_count
-  image      = data.coder_parameter.container_image.value
-  name       = "coder-${data.coder_workspace_owner.me.name}-${lower(data.coder_workspace.me.name)}"
-  hostname   = data.coder_workspace.me.name
-  user       = "coder"
-  entrypoint = ["sh", "-c", replace(coder_agent.main.init_script, "/localhost|127\\.0\\.0\\.1/", "host.docker.internal")]
-  env        = ["CODER_AGENT_TOKEN=${coder_agent.main.token}"]
-  memory     = data.coder_parameter.mem_limit_gb.value * 1024 * 1024 * 1024
-  cpu_shares = data.coder_parameter.cpu_weight.value * 1024
-
-  # Resource limits and swap prevention
+  count       = data.coder_workspace.me.start_count
+  image       = "ghcr.io/swatpeacekeeper/claude-workspace:latest"
+  name        = "coder-${data.coder_workspace_owner.me.name}-${lower(data.coder_workspace.me.name)}"
+  hostname    = data.coder_workspace.me.name
+  user        = "coder"
+  entrypoint  = ["sh", "-c", replace(coder_agent.main.init_script, "/localhost|127\\.0\\.0\\.1/", "host.docker.internal")]
+  env         = ["CODER_AGENT_TOKEN=${coder_agent.main.token}"]
+  memory      = data.coder_parameter.mem_limit_gb.value * 1024 * 1024 * 1024
+  cpu_shares  = data.coder_parameter.cpu_weight.value * 1024
   memory_swap = data.coder_parameter.mem_limit_gb.value * 1024 * 1024 * 1024
-  # NOTE: no-new-privileges and cap_drop are omitted because the workspace
-  # needs sudo for tool installation (apt-get, binary installs to /usr/local/bin)
-  # and the Coder agentapi module uses sudo internally.
 
   host {
     host = "host.docker.internal"
     ip   = "host-gateway"
   }
-  # Persistent home directory
   volumes {
     container_path = "/home/coder"
     volume_name    = docker_volume.home_volume.name
     read_only      = false
   }
-  # Host Docker socket for docker build/compose/run
   volumes {
     host_path      = "/var/run/docker.sock"
     container_path = "/var/run/docker.sock"
   }
+
   labels {
     label = "coder.owner"
     value = data.coder_workspace_owner.me.name

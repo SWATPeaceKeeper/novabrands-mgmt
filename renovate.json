@@ -1,0 +1,31 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "minimumReleaseAge": "7 days",
+  "packageRules": [
+    {
+      "description": "Group GitHub Actions updates",
+      "matchManagers": ["github-actions"],
+      "groupName": "github-actions",
+      "schedule": ["before 9am on monday"]
+    },
+    {
+      "description": "Group Dockerfile ARG version updates",
+      "matchManagers": ["dockerfile"],
+      "groupName": "dockerfile-tools",
+      "schedule": ["before 9am on monday"]
+    },
+    {
+      "description": "Group Coder Terraform module updates",
+      "matchManagers": ["terraform"],
+      "groupName": "coder-modules",
+      "schedule": ["before 9am on monday"]
+    },
+    {
+      "description": "Group npm global updates",
+      "matchManagers": ["npm"],
+      "groupName": "npm-globals",
+      "schedule": ["before 9am on monday"]
+    }
+  ]
+}
