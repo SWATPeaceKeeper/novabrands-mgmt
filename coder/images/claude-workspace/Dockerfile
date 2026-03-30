@@ -9,6 +9,9 @@ ARG HCLOUD_VERSION=1.53.0
 
 USER root
 
+# Remove stale apt sources from the base image (Yarn GPG key expired)
+RUN rm -f /etc/apt/sources.list.d/yarn.list
+
 # ── System packages ──────────────────────────────────────────────────────────
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
