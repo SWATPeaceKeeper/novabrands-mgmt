@@ -473,7 +473,7 @@ services:
           memory: 256M
 
   coder:
-    image: ghcr.io/coder/coder:v2.30.4
+    image: ghcr.io/coder/coder:v2.31.6
     container_name: coder
     restart: unless-stopped
     security_opt:

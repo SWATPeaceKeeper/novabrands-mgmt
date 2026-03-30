@@ -134,7 +134,7 @@ Collabora braucht kein eigenes Backend-Netzwerk — es kommuniziert ausschliessl
 | `nextcloud-redis` | `redis` | `7.4.8-alpine` |
 | `nextcloud-cron` | `nextcloud` | `32.0.6-apache` |
 | `collabora` | `collabora/code` | `25.04.9.3.1` |
-| `coder` | `ghcr.io/coder/coder` | `v2.30.4` |
+| `coder` | `ghcr.io/coder/coder` | `v2.31.6` |
 | `coder-db` | `postgres` | `18.3-alpine` |
 
 Versionen werden mit Renovate oder manuell getrackt. Alle Images sind auf exakte Patch-Versionen gepinnt. Vor jedem Update Release-Notes lesen.
@@ -693,7 +693,7 @@ coder-db:
         memory: 256M
 
 coder:
-  image: ghcr.io/coder/coder:v2.30.4
+  image: ghcr.io/coder/coder:v2.31.6
   container_name: coder
   restart: unless-stopped
   environment:
