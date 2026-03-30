@@ -20,6 +20,12 @@ jobs:
     outputs:
       image-tag: ${{ github.sha }}
     steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/share/powershell /usr/local/share/chromium
+          sudo apt-get clean
+          df -h /
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
         with:
           persist-credentials: false
