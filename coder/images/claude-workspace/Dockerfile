@@ -12,18 +12,18 @@ ARG DOTNET_VERSION=9.0
 
 USER root
 
-# ── System packages + language runtimes ──────────────────────────────────────
+# ── Upgrade base + install language runtimes ─────────────────────────────────
+# Base image includes: python3, build-essential, git, jq, curl, wget, unzip
 RUN apt-get update \
+    && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends \
-        ripgrep fd-find jq shellcheck tmux unzip wget gnupg \
-        curl ca-certificates \
-        build-essential gcc g++ make cmake \
-        python3 python3-pip python3-venv python3-dev \
+        ripgrep fd-find shellcheck tmux gnupg ca-certificates cmake \
+        python3-venv python3-dev \
         ruby ruby-dev \
-        php php-cli php-mbstring php-xml php-curl \
+        php-cli php-mbstring php-xml php-curl \
     && rm -rf /var/lib/apt/lists/*
 
-# ── Node.js (via nodesource) ─────────────────────────────────────────────────
+# ── Node.js (via nodesource) ────────────────────────────────────────────────
 RUN curl -fsSL https://deb.nodesource.com/setup_${NODE_MAJOR}.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
@@ -78,8 +78,9 @@ RUN npm install -g wrangler gitnexus
 
 # ── User-level tools (as coder) ──────────────────────────────────────────────
 USER coder
+ENV PATH="/home/coder/.local/bin:${PATH}"
 
 RUN curl -fsSL https://astral.sh/uv/install.sh | sh \
-    && ~/.local/bin/uv tool install ruff
+    && uv tool install ruff
 
 RUN curl -fsSL https://raw.githubusercontent.com/rtk-ai/rtk/refs/heads/master/install.sh | sh
