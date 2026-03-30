@@ -1,4 +1,4 @@
-FROM codercom/enterprise-base:ubuntu-24.04
+FROM codercom/enterprise-base:ubuntu
 
 # ── Version pins (updated by Renovate) ───────────────────────────────────────
 ARG SHFMT_VERSION=3.11.0
