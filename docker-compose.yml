@@ -515,7 +515,7 @@ services:
       - "traefik.http.services.coder.loadbalancer.server.port=7080"
       - "traefik.http.routers.coder.middlewares=coder-headers"
       # Wildcard router for subdomain apps (code-server, filebrowser, etc.)
-      - "traefik.http.routers.coder-wildcard.rule=HostRegexp(`{subdomain:[a-z0-9-]+}.${CODER_HOSTNAME}`)"
+      - "traefik.http.routers.coder-wildcard.rule=HostRegexp(`[a-z0-9-]+\\.${CODER_HOSTNAME}`)"
       - "traefik.http.routers.coder-wildcard.entrypoints=websecure"
       - "traefik.http.routers.coder-wildcard.tls.certresolver=letsencrypt-dns"
       - "traefik.http.routers.coder-wildcard.tls.domains[0].main=${CODER_HOSTNAME}"
