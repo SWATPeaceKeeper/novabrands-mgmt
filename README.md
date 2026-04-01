@@ -10,9 +10,10 @@ Documentation and management stack for Novabrands IT consulting.
 | **Nextcloud** | Cloud storage, CalDAV/CardDAV, file sharing |
 | **Collabora** | Browser-based document editing (via Nextcloud) |
 | **Coder** | Remote development environments (control plane) |
+| **Speakr** | Meeting transcription with speaker diarization |
 | **Traefik** | Reverse proxy, TLS termination |
 
-Runs on an OVH RISE-S dedicated server (Frankfurt). Full specification in `SPEC.md`.
+Runs on an OVH RISE-S dedicated server (Frankfurt, Ryzen 7 9700X, 64 GB RAM). Full specification in `SPEC.md`.
 
 ## Quick Start
 
