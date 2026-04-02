@@ -12,6 +12,12 @@ terraform {
 
 provider "docker" {}
 
+variable "claude_oauth_token" {
+  type      = string
+  sensitive = true
+  default   = ""
+}
+
 # ---------------------------------------------------------------------------
 # Data sources
 # ---------------------------------------------------------------------------
@@ -112,7 +118,7 @@ data "coder_parameter" "claude_code_oauth_token" {
   display_name = "Claude Code OAuth Token"
   type         = "string"
   form_type    = "input"
-  default      = ""
+  default      = var.claude_oauth_token
   mutable      = true
   description  = "Generate via: claude setup-token (leave empty to login interactively)"
   ephemeral    = true
