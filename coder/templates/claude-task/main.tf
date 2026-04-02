@@ -107,14 +107,14 @@ data "coder_parameter" "cpu_weight" {
   }
 }
 
-data "coder_parameter" "anthropic_api_key" {
-  name         = "anthropic_api_key"
-  display_name = "Anthropic API Key"
+data "coder_parameter" "claude_code_oauth_token" {
+  name         = "claude_code_oauth_token"
+  display_name = "Claude Code OAuth Token"
   type         = "string"
   form_type    = "input"
   default      = ""
   mutable      = true
-  description  = "API key for Claude (leave empty to use OAuth)"
+  description  = "Generate via: claude setup-token (leave empty to login interactively)"
   ephemeral    = true
 }
 
@@ -187,7 +187,7 @@ module "claude-code" {
   agent_id           = coder_agent.main.id
   workdir            = try(module.git-clone[0].repo_dir, "/home/coder")
   order              = 999
-  claude_api_key     = data.coder_parameter.anthropic_api_key.value
+  claude_code_oauth_token = data.coder_parameter.claude_code_oauth_token.value
   ai_prompt          = data.coder_task.me.prompt
   system_prompt      = data.coder_parameter.system_prompt.value
   model              = "sonnet"
