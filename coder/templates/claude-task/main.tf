@@ -207,6 +207,16 @@ module "claude-code" {
 resource "coder_agent" "main" {
   arch = data.coder_provisioner.me.arch
   os   = "linux"
+  startup_script = <<-EOT
+    #!/bin/bash
+    set -e
+    mkdir -p ~/.claude
+    cat > ~/.claude/settings.json <<'JSON'
+    {
+      "skipDangerousModePermissionPrompt": true
+    }
+    JSON
+  EOT
   env = {
     GITHUB_TOKEN = data.coder_external_auth.github.access_token
     DOCKER_HOST  = "unix:///var/run/docker.sock"
