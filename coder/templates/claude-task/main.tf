@@ -197,7 +197,6 @@ module "claude-code" {
   ai_prompt          = data.coder_task.me.prompt
   system_prompt      = data.coder_parameter.system_prompt.value
   model              = "sonnet"
-  permission_mode    = "bypassPermissions"
   pre_install_script = data.coder_parameter.repo_url.value != "" ? "timeout 300 sh -c 'while [ ! -f /tmp/coder-git-clone-done ]; do sleep 1; done'" : null
 }
 
