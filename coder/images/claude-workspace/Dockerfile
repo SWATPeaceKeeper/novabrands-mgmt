@@ -76,6 +76,9 @@ RUN curl -fsSL "https://github.com/mvdan/sh/releases/download/v${SHFMT_VERSION}/
 # ── npm global tools ─────────────────────────────────────────────────────────
 RUN npm install -g wrangler gitnexus
 
+# ── Playwright Chromium (system deps) ────────────────────────────────────────
+RUN npx playwright install-deps chromium
+
 # ── User-level tools (as coder) ──────────────────────────────────────────────
 USER coder
 ENV PATH="/home/coder/.local/bin:${PATH}"
@@ -84,3 +87,6 @@ RUN curl -fsSL https://astral.sh/uv/install.sh | sh \
     && uv tool install ruff
 
 RUN curl -fsSL https://raw.githubusercontent.com/rtk-ai/rtk/refs/heads/master/install.sh | sh
+
+# ── Playwright Chromium browser ──────────────────────────────────────────────
+RUN npx playwright install chromium
