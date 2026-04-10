@@ -171,7 +171,7 @@ info "SSH-Hardening..."
 
 remote "
   sudo tee /etc/ssh/sshd_config.d/90-hardening.conf > /dev/null <<'SSHEOF'
-PermitRootLogin no
+PermitRootLogin prohibit-password
 PasswordAuthentication no
 MaxAuthTries 3
 LoginGraceTime 20
