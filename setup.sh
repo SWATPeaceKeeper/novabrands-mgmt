@@ -3,10 +3,10 @@
 # Documentation Stack - Server Setup Script
 # ============================================================================
 # Provisioniert einen Hetzner CX33 VPS (Ubuntu 24.04 LTS):
-#   1.  RAID-Health pruefen
+#   1.  Disk-Health pruefen
 #   2.  Needrestart auf automatisch stellen (keine interaktiven Prompts)
 #   3.  System-Update (apt upgrade)
-#   4.  SSH-Hardening (Root-Login deaktivieren, Limits setzen)
+#   4.  SSH-Hardening (Key-only, Limits setzen)
 #   5.  Pakete installieren (Docker, fail2ban)
 #   6.  Unnoetige Services deaktivieren
 #   7.  Kernel-Hardening (sysctl)
