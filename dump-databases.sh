@@ -28,13 +28,4 @@ docker exec nextcloud-db rm /tmp/nextcloud.dump
 echo "=== Disabling Nextcloud Maintenance Mode ==="
 docker exec -u www-data nextcloud php occ maintenance:mode --off
 
-echo "=== Dumping Coder DB ==="
-docker exec coder-db pg_dump \
-  -U coder \
-  -d coder \
-  --format=custom \
-  --file=/tmp/coder.dump
-docker cp coder-db:/tmp/coder.dump "$DUMP_DIR/coder.dump"
-docker exec coder-db rm /tmp/coder.dump
-
 echo "=== Dumps created in $DUMP_DIR ==="
