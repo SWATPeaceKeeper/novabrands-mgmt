@@ -1,20 +1,17 @@
 # ============================================================================
 # Documentation Stack - Docker Compose
 # ============================================================================
-# Standort: OVH RISE-S Dedicated Server (Frankfurt)
+# Standort: Hetzner CX33 VPS (4 vCPU, 8 GB RAM, 80 GB SSD)
 # Pfad auf Server: /opt/containers/novabrands-mgmt/docker-compose.yml
 #
-# Services: Traefik, OpenProject, Nextcloud, Collabora, Coder, Speakr
-# Datenbanken: 3x PostgreSQL 18, 1x Redis 7, 1x Memcached, 1x SQLite
+# Services: Traefik, OpenProject, Nextcloud, Collabora
+# Datenbanken: 2x PostgreSQL 18, 1x Redis 7, 1x Memcached
 #
 # NETZWERKE:
 # - proxy:                Traefik -> oeffentliche Services
 # - socket-proxy:         Traefik <-> Docker Socket Proxy (read-only)
-# - coder-socket-proxy:   Coder <-> Docker Socket Proxy (read/write)
 # - openproject-backend:  OpenProject <-> PostgreSQL, Memcached
 # - nextcloud-backend:    Nextcloud <-> PostgreSQL, Redis
-# - coder-backend:        Coder <-> PostgreSQL
-# - speakr-backend:       Speakr <-> WhisperX ASR (intern)
 # ============================================================================
 
 services:
@@ -38,36 +35,6 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
       - socket-proxy
-    deploy:
-      resources:
-        limits:
-          memory: 64M
-        reservations:
-          memory: 32M
-
-  # =========================================================================
-  # DOCKER SOCKET PROXY (Coder - read/write for container provisioning)
-  # =========================================================================
-  coder-socket-proxy:
-    image: tecnativa/docker-socket-proxy:0.3.0
-    container_name: coder-socket-proxy
-    restart: unless-stopped
-    security_opt:
-      - no-new-privileges:true
-    environment:
-      CONTAINERS: 1
-      IMAGES: 1
-      NETWORKS: 1
-      VOLUMES: 1
-      EXEC: 1
-      INFO: 1
-      POST: 1
-      SERVICES: 0
-      TASKS: 0
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-    networks:
-      - coder-socket-proxy
     deploy:
       resources:
         limits:
@@ -176,9 +143,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 2048M
-        reservations:
           memory: 1536M
+        reservations:
+          memory: 1024M
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=proxy"
@@ -222,9 +189,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: 384M
         reservations:
-          memory: 256M
+          memory: 192M
 
   openproject-cache:
     image: memcached:1.6.41-alpine
@@ -296,9 +263,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1536M
+          memory: 1024M
         reservations:
-          memory: 768M
+          memory: 512M
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=proxy"
@@ -347,9 +314,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: 384M
         reservations:
-          memory: 256M
+          memory: 192M
 
   nextcloud-redis:
     image: redis:7.4.8-alpine
@@ -371,7 +338,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 320M
+          memory: 256M
         reservations:
           memory: 128M
 
@@ -397,7 +364,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: 384M
         reservations:
           memory: 128M
 
@@ -423,9 +390,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1536M
-        reservations:
           memory: 1024M
+        reservations:
+          memory: 512M
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=proxy"
@@ -437,173 +404,6 @@ services:
       - "traefik.http.middlewares.collabora-headers.headers.stsSeconds=31536000"
       - "traefik.http.middlewares.collabora-headers.headers.customRequestHeaders.X-Forwarded-Proto=https"
 
-  # =========================================================================
-  # CODER
-  # =========================================================================
-  coder-db:
-    image: postgres:18.3-alpine
-    container_name: coder-db
-    restart: unless-stopped
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    cap_add:
-      - CHOWN
-      - DAC_OVERRIDE
-      - FOWNER
-      - SETGID
-      - SETUID
-    environment:
-      POSTGRES_DB: ${CODER_DB_NAME:-coder}
-      POSTGRES_USER: ${CODER_DB_USER:-coder}
-      POSTGRES_PASSWORD: ${CODER_DB_PASSWORD:?CODER_DB_PASSWORD muss gesetzt sein}
-      POSTGRES_INITDB_ARGS: "--data-checksums"
-    volumes:
-      - coder-pgdata:/var/lib/postgresql
-    networks:
-      - coder-backend
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${CODER_DB_USER:-coder} -d ${CODER_DB_NAME:-coder}"]
-      interval: 15s
-      timeout: 5s
-      retries: 5
-    deploy:
-      resources:
-        limits:
-          memory: 512M
-        reservations:
-          memory: 256M
-
-  coder:
-    image: ghcr.io/coder/coder:v2.31.6
-    container_name: coder
-    restart: unless-stopped
-    security_opt:
-      - no-new-privileges:true
-    environment:
-      CODER_PG_CONNECTION_URL: "postgresql://${CODER_DB_USER:-coder}:${CODER_DB_PASSWORD}@coder-db/${CODER_DB_NAME:-coder}?sslmode=disable"
-      CODER_HTTP_ADDRESS: "0.0.0.0:7080"
-      CODER_ACCESS_URL: "https://${CODER_HOSTNAME}"
-      CODER_WILDCARD_ACCESS_URL: "*.coder.novabrands.org"
-      DOCKER_HOST: tcp://coder-socket-proxy:2375
-      HCLOUD_TOKEN: ${HCLOUD_TOKEN}
-      CODER_EXTERNAL_AUTH_0_ID: ${CODER_EXTERNAL_AUTH_0_ID:-github}
-      CODER_EXTERNAL_AUTH_0_TYPE: ${CODER_EXTERNAL_AUTH_0_TYPE:-github}
-      CODER_EXTERNAL_AUTH_0_CLIENT_ID: ${CODER_EXTERNAL_AUTH_0_CLIENT_ID}
-      CODER_EXTERNAL_AUTH_0_CLIENT_SECRET: ${CODER_EXTERNAL_AUTH_0_CLIENT_SECRET}
-    networks:
-      - proxy
-      - coder-backend
-      - coder-socket-proxy
-    depends_on:
-      coder-db:
-        condition: service_healthy
-      coder-socket-proxy:
-        condition: service_started
-    deploy:
-      resources:
-        limits:
-          memory: 1536M
-        reservations:
-          memory: 768M
-    labels:
-      - "traefik.enable=true"
-      - "traefik.docker.network=proxy"
-      - "traefik.http.routers.coder.rule=Host(`${CODER_HOSTNAME}`)"
-      - "traefik.http.routers.coder.entrypoints=websecure"
-      - "traefik.http.routers.coder.tls.certresolver=letsencrypt"
-      - "traefik.http.services.coder.loadbalancer.server.port=7080"
-      - "traefik.http.routers.coder.middlewares=coder-headers"
-      # Wildcard router for subdomain apps (code-server, filebrowser, etc.)
-      - "traefik.http.routers.coder-wildcard.rule=HostRegexp(`[a-z0-9-]+\\.${CODER_HOSTNAME}`)"
-      - "traefik.http.routers.coder-wildcard.entrypoints=websecure"
-      - "traefik.http.routers.coder-wildcard.tls.certresolver=letsencrypt-dns"
-      - "traefik.http.routers.coder-wildcard.tls.domains[0].main=${CODER_HOSTNAME}"
-      - "traefik.http.routers.coder-wildcard.tls.domains[0].sans=*.${CODER_HOSTNAME}"
-      - "traefik.http.routers.coder-wildcard.service=coder"
-      - "traefik.http.routers.coder-wildcard.middlewares=coder-headers"
-      - "traefik.http.middlewares.coder-headers.headers.customRequestHeaders.X-Forwarded-Proto=https"
-      - "traefik.http.middlewares.coder-headers.headers.stsSeconds=31536000"
-
-  # =========================================================================
-  # SPEAKR - Speech-to-Text Transcription
-  # =========================================================================
-  speakr-asr:
-    image: learnedmachine/whisperx-asr-service:0.3.1
-    container_name: speakr-asr
-    restart: unless-stopped
-    shm_size: '4g'
-    environment:
-      DEVICE: cpu
-      COMPUTE_TYPE: float32
-      BATCH_SIZE: 4
-      HF_TOKEN: ${SPEAKR_HF_TOKEN}
-      PRELOAD_MODEL: medium
-      MAX_FILE_SIZE_MB: 2000
-      SERVE_MODE: simple
-      TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD: "true"
-    volumes:
-      - speakr-asr-cache:/.cache
-    networks:
-      - speakr-backend
-    healthcheck:
-      test: ["CMD-SHELL", "python3 -c \"import requests; requests.get('http://localhost:9000/health')\" || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 120s
-    deploy:
-      resources:
-        limits:
-          memory: 8192M
-        reservations:
-          memory: 2048M
-
-  speakr:
-    image: learnedmachine/speakr:0.8.15-alpha-lite
-    container_name: speakr
-    restart: unless-stopped
-    security_opt:
-      - no-new-privileges:true
-    environment:
-      ADMIN_USERNAME: ${SPEAKR_ADMIN_USER:-admin}
-      ADMIN_EMAIL: ${SPEAKR_ADMIN_EMAIL}
-      ADMIN_PASSWORD: ${SPEAKR_ADMIN_PASSWORD:?SPEAKR_ADMIN_PASSWORD muss gesetzt sein}
-      TRANSCRIPTION_CONNECTOR: asr_endpoint
-      ASR_BASE_URL: http://speakr-asr:9000
-      ASR_TIMEOUT: "3600"
-      ASR_DIARIZE: "true"
-      ALLOW_REGISTRATION: "false"
-      TIMEZONE: Europe/Berlin
-      LOG_LEVEL: ERROR
-      ENABLE_CHUNKING: "true"
-      CHUNK_LIMIT: 20MB
-      JOB_QUEUE_WORKERS: "1"
-    volumes:
-      - speakr-uploads:/data/uploads
-      - speakr-instance:/data/instance
-    networks:
-      - proxy
-      - speakr-backend
-    depends_on:
-      speakr-asr:
-        condition: service_healthy
-    deploy:
-      resources:
-        limits:
-          memory: 1024M
-        reservations:
-          memory: 256M
-    labels:
-      - "traefik.enable=true"
-      - "traefik.docker.network=proxy"
-      - "traefik.http.routers.speakr.rule=Host(`${SPEAKR_HOSTNAME}`)"
-      - "traefik.http.routers.speakr.entrypoints=websecure"
-      - "traefik.http.routers.speakr.tls.certresolver=letsencrypt"
-      - "traefik.http.services.speakr.loadbalancer.server.port=8899"
-      - "traefik.http.routers.speakr.middlewares=security-headers,rate-limit"
-
 # =============================================================================
 # NETZWERKE
 # =============================================================================
@@ -613,17 +413,10 @@ networks:
   socket-proxy:
     driver: bridge
     internal: true
-  coder-socket-proxy:
-    driver: bridge
-    internal: true
   openproject-backend:
     external: true
   nextcloud-backend:
     external: true
-  coder-backend:
-    external: true
-  speakr-backend:
-    driver: bridge
 
 # =============================================================================
 # VOLUMES
@@ -634,7 +427,3 @@ volumes:
   nc-html:
   nc-data:
   nc-pgdata:
-  coder-pgdata:
-  speakr-uploads:
-  speakr-instance:
-  speakr-asr-cache:
