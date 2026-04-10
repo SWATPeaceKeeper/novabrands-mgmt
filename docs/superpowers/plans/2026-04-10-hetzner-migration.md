@@ -680,15 +680,19 @@ ssh -i ~/.ssh/novabrands-mgmt ubuntu@51.77.84.41 "
 
 Expected: two dump files (`openproject.dump` ~88 MB, `nextcloud.dump` ~77 MB).
 
-- [ ] **Step 3: Stop all services on OVH**
+- [ ] **Step 3: Stop migrated services on OVH (keep Coder running!)**
+
+**WICHTIG:** Kein `docker compose down` — das wuerde Coder und damit den Workspace stoppen!
 
 ```bash
 ssh -i ~/.ssh/novabrands-mgmt ubuntu@51.77.84.41 "
-  cd /opt/containers/novabrands-mgmt && docker compose down
+  cd /opt/containers/novabrands-mgmt
+  docker compose stop openproject openproject-db openproject-cache \
+    nextcloud nextcloud-db nextcloud-redis nextcloud-cron collabora
 "
 ```
 
-Expected: all containers stopped and removed. Volumes persist.
+Expected: only migrated services stopped. Coder, Traefik, Socket Proxies remain running.
 
 - [ ] **Step 4: Export volume data on OVH**
 
