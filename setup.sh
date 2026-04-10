@@ -23,16 +23,16 @@
 #   18. Traefik + Socket Proxy starten
 #
 # Voraussetzungen:
-#   - curl, jq, openssl, ssh, pass-cli installiert
-#   - pass-cli eingeloggt (pass-cli login)
-#   - CLOUDFLARE_API_TOKEN und CLOUDFLARE_ZONE_ID gesetzt
+#   - curl, jq, openssl, ssh, infisical installiert
+#   - infisical eingeloggt (infisical login)
+#   - CLOUDFLARE_ZONE_ID gesetzt (CF_DNS_API_TOKEN kommt aus Infisical)
 #   - SSH Key ~/.ssh/novabrands-hetzner vorhanden
-#   - Proton Pass Vault "Novabrands Infra" mit allen Items angelegt
+#   - Infisical Projekt "novabrands-mgmt" mit allen Secrets angelegt
 #   - Hetzner VPS laeuft mit Ubuntu 24.04, Root-Zugang per SSH Key
 #
 # Verwendung:
-#   pass-cli login
-#   export CLOUDFLARE_API_TOKEN=... CLOUDFLARE_ZONE_ID=...
+#   infisical login
+#   export CLOUDFLARE_ZONE_ID=...
 #   ./setup.sh
 # ============================================================================
 set -euo pipefail
@@ -93,17 +93,23 @@ cf_api() {
 # ---------------------------------------------------------------------------
 info "Pruefe Voraussetzungen..."
 
-for cmd in curl jq openssl ssh pass-cli; do
-  command -v "$cmd" >/dev/null 2>&1 || die "'${cmd}' ist nicht installiert. Fuer pass-cli: curl -fsSL https://proton.me/download/pass-cli/install.sh | bash"
+for cmd in curl jq openssl ssh infisical; do
+  command -v "$cmd" >/dev/null 2>&1 || die "'${cmd}' ist nicht installiert."
 done
 
-[ -z "${CLOUDFLARE_API_TOKEN:-}" ] && die "CLOUDFLARE_API_TOKEN ist nicht gesetzt."
 [ -z "${CLOUDFLARE_ZONE_ID:-}" ] && die "CLOUDFLARE_ZONE_ID ist nicht gesetzt."
 [ -f "$SSH_KEY_FILE" ] || die "SSH Key nicht gefunden: ${SSH_KEY_FILE}"
-[ -f "$(dirname "$0")/.env.template" ] || die ".env.template nicht gefunden. Bist du im Repo-Verzeichnis?"
+[ -f "$(dirname "$0")/stack.env" ] || die "stack.env nicht gefunden. Bist du im Repo-Verzeichnis?"
 
-# Pruefen ob pass-cli eingeloggt ist
-pass-cli vault list >/dev/null 2>&1 || die "pass-cli nicht eingeloggt. Erst: pass-cli login"
+# Secrets aus Infisical laden
+info "Lade Secrets aus Infisical..."
+INFISICAL_SECRETS=$(infisical secrets --env=prod --path=/novabrands-mgmt --output=dotenv 2>/dev/null) \
+  || die "Infisical Secrets nicht ladbar. Erst: infisical login"
+eval "$INFISICAL_SECRETS"
+
+# CF_DNS_API_TOKEN kommt aus Infisical
+[ -z "${CF_DNS_API_TOKEN:-}" ] && die "CF_DNS_API_TOKEN nicht in Infisical gefunden."
+CLOUDFLARE_API_TOKEN="$CF_DNS_API_TOKEN"
 
 info "Server:  ${SERVER_IP}"
 info "User:    ${ADMIN_USER}"
@@ -459,58 +465,34 @@ remote "
 ok "Repository geklont."
 
 # ---------------------------------------------------------------------------
-# 18. .ENV AUS PROTON PASS GENERIEREN
+# 18. INFISICAL CLI AUF SERVER INSTALLIEREN
 # ---------------------------------------------------------------------------
-SECRETS_EXIST=$(remote "[ -f '${DEPLOY_DIR}/.env' ] && echo 'yes' || echo 'no'")
-if [ "$SECRETS_EXIST" = "yes" ]; then
-  warn ".env existiert bereits auf dem Server — wird NICHT ueberschrieben."
-  warn "Zum Neugenerieren: .env auf dem Server loeschen und setup.sh erneut ausfuehren."
-  TRAEFIK_PASSWORD="(siehe .env auf dem Server)"
-else
-  info "Generiere .env aus Proton Pass (pass-cli inject)..."
+info "Installiere Infisical CLI auf Server..."
 
-  LOCAL_ENV=$(mktemp)
-
-  # Secrets aus Proton Pass aufloesen
-  pass-cli inject \
-    --in-file "${SCRIPT_DIR}/.env.template" \
-    --out-file "$LOCAL_ENV" \
-    --file-mode 0600 \
-    --force || die "pass-cli inject fehlgeschlagen. Sind alle Items im Vault 'Novabrands Infra' angelegt?"
-
-  # Traefik Dashboard htpasswd aus aufgeloestem Passwort generieren
-  TRAEFIK_PASSWORD=$(grep '^TRAEFIK_DASHBOARD_PASSWORD=' "$LOCAL_ENV" | cut -d= -f2-)
-  [ -z "$TRAEFIK_PASSWORD" ] && die "TRAEFIK_DASHBOARD_PASSWORD nicht aufgeloest. Proton Pass Item pruefen."
-
-  if command -v htpasswd >/dev/null 2>&1; then
-    TRAEFIK_AUTH=$(htpasswd -nb admin "$TRAEFIK_PASSWORD")
+remote "
+  if ! command -v infisical &>/dev/null; then
+    curl -1sLf 'https://artifacts-cli.infisical.com/setup.deb.sh' -o /tmp/infisical-setup.sh
+    bash /tmp/infisical-setup.sh
+    apt-get update -qq
+    apt-get install -y -qq infisical >/dev/null 2>&1
+    rm -f /tmp/infisical-setup.sh
+    echo 'Infisical CLI installiert.'
   else
-    TRAEFIK_AUTH=$(remote "htpasswd -nb admin '${TRAEFIK_PASSWORD}'")
+    echo 'Infisical CLI bereits installiert.'
   fi
-  TRAEFIK_AUTH_ESCAPED=$(echo "$TRAEFIK_AUTH" | sed 's/\$/\$\$/g')
+"
+ok "Infisical CLI auf Server bereit."
 
-  sed -i "s|^TRAEFIK_DASHBOARD_AUTH=.*|TRAEFIK_DASHBOARD_AUTH=${TRAEFIK_AUTH_ESCAPED}|" "$LOCAL_ENV"
-
-  # .env auf den Server kopieren
-  scp -i "$SSH_KEY_FILE" \
-    -o StrictHostKeyChecking=no \
-    -o UserKnownHostsFile=/dev/null \
-    -o LogLevel=ERROR \
-    "$LOCAL_ENV" "${ADMIN_USER}@${SERVER_IP}:${DEPLOY_DIR}/.env"
-
-  remote "chmod 600 '${DEPLOY_DIR}/.env'"
-  rm -f "$LOCAL_ENV"
-  ok ".env aus Proton Pass generiert und auf Server kopiert."
-fi
+TRAEFIK_PASSWORD="${TRAEFIK_DASHBOARD_PASSWORD}"
 
 # ---------------------------------------------------------------------------
 # 19. DNS RECORDS (Cloudflare)
 # ---------------------------------------------------------------------------
 info "DNS Records bei Cloudflare..."
 
-# Domain aus .env.template lesen (Klartext, kein Secret)
-DOMAIN=$(grep '^DOMAIN=' "${SCRIPT_DIR}/.env.template" | cut -d= -f2-)
-[ -z "$DOMAIN" ] && die "DOMAIN nicht in .env.template gefunden."
+# Domain aus stack.env lesen (Klartext, kein Secret)
+DOMAIN=$(grep '^DOMAIN=' "${SCRIPT_DIR}/stack.env" | cut -d= -f2-)
+[ -z "$DOMAIN" ] && die "DOMAIN nicht in stack.env gefunden."
 info "Domain: ${DOMAIN}"
 
 for sub in "${SUBDOMAINS[@]}"; do
@@ -535,7 +517,7 @@ done
 # ---------------------------------------------------------------------------
 info "Starte Traefik + Socket Proxy..."
 
-remote "cd '${DEPLOY_DIR}' && sudo docker compose up -d socket-proxy traefik"
+remote "cd '${DEPLOY_DIR}' && CF_DNS_API_TOKEN='${CF_DNS_API_TOKEN}' docker compose --env-file stack.env up -d socket-proxy traefik"
 
 sleep 5
 TRAEFIK_STATUS=$(remote "sudo docker ps --filter name=traefik --format '{{.Status}}'")
@@ -580,11 +562,15 @@ echo "    URL:       https://traefik.${DOMAIN}"
 echo "    User:      admin"
 echo "    Passwort:  ${TRAEFIK_PASSWORD}"
 echo ""
+echo "  Secrets:      Infisical (Pfad: /novabrands-mgmt, Env: prod)"
+echo "  Config:       stack.env (committed)"
+echo ""
 echo "  Naechste Schritte:"
-echo "    1. SMTP-Daten in .env eintragen"
+echo "    1. Machine Identity auf Server einrichten (fuer infisical run)"
 echo "    2. Documentation Stack starten:"
 echo "       ssh -i ${SSH_KEY_FILE} ${ADMIN_USER}@${SERVER_IP}"
-echo "       cd ${DEPLOY_DIR} && docker compose up -d"
+echo "       cd ${DEPLOY_DIR}"
+echo "       infisical run --env=prod --path=/novabrands-mgmt -- docker compose --env-file stack.env up -d"
 echo "    3. Services konfigurieren (siehe SPEC.md)"
 echo ""
 echo "  WICHTIG: Traefik-Passwort JETZT notieren — wird nicht erneut angezeigt."

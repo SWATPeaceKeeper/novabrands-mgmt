@@ -12,6 +12,11 @@
 # - socket-proxy:         Traefik <-> Docker Socket Proxy (read-only)
 # - openproject-backend:  OpenProject <-> PostgreSQL, Memcached
 # - nextcloud-backend:    Nextcloud <-> PostgreSQL, Redis
+#
+# SECRETS:
+# Klartext-Config:  stack.env (committed)
+# Echte Secrets:    Infisical (Pfad: /novabrands-mgmt, Env: prod)
+# Start:            infisical run --env=prod --path=/novabrands-mgmt -- docker compose up -d
 # ============================================================================
 
 services:
