@@ -1,7 +1,7 @@
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **novabrands-mgmt** (243 symbols, 234 relationships, 0 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **novabrands-mgmt** (278 symbols, 267 relationships, 0 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
@@ -102,49 +102,33 @@ To check whether embeddings exist, inspect `.gitnexus/meta.json` — the `stats.
 
 ## Infrastructure Overview
 
-Self-hosted Docker Compose stack on OVH RISE-S (Frankfurt, Ryzen 7 9700X, 64 GB RAM, no GPU).
+Self-hosted Docker Compose stack on Hetzner CX33 VPS (4 vCPU shared, 8 GB RAM, 80 GB SSD).
 
 ### Services
 
 | Service | URL | Image |
 |---------|-----|-------|
-| Traefik | `traefik.${DOMAIN}` | `traefik:v3.6.9` |
+| Traefik | `traefik.novabrands.org` | `traefik:v3.6.9` |
 | OpenProject | `openproject.novabrands.org` | `openproject/openproject:17.2.1` |
 | Nextcloud | `cloud.novabrands.org` | `nextcloud:32.0.6-apache` |
 | Collabora | `office.novabrands.org` | `collabora/code:25.04.9.3.1` |
-| Coder | `coder.novabrands.org` | `ghcr.io/coder/coder:v2.31.6` |
-| Speakr | `ai.novabrands.org` | `learnedmachine/speakr:0.8.15-alpha-lite` |
-| WhisperX ASR | internal only | `learnedmachine/whisperx-asr-service:0.3.1` |
-
-### Speakr (Meeting Transcription)
-
-Self-hosted transcription platform with speaker diarization via WhisperX (faster-whisper + pyannote).
-
-- **Web UI:** `https://ai.novabrands.org` (login required, no public registration)
-- **ASR Backend:** WhisperX on CPU, medium model, speaker diarization enabled
-- **HuggingFace Token:** Required for pyannote diarization models (stored in `.env` as `SPEAKR_HF_TOKEN`)
-- **Export:** SRT, VTT, TXT, JSON
-- **Performance:** ~15-25 min for a 13-min recording on CPU (medium model)
-- **LLM Features:** Not configured (summaries/chat require `TEXT_MODEL_API_KEY`)
-
-To switch Whisper model (e.g., to large-v3 for better accuracy):
-```bash
-# Change PRELOAD_MODEL in docker-compose.yml speakr-asr service
-# Increase memory limit to 12288M for large-v3
-docker compose up -d speakr-asr
-```
 
 ### Deployment
 
 ```bash
-# Server: ubuntu@51.77.84.41 (SSH config: novabrands-mgmt)
+# Server: root@178.104.149.226 (SSH key: ~/.ssh/novabrands-hetzner)
 # Repo path on server: /opt/containers/novabrands-mgmt/
 
 # Deploy changes
-scp docker-compose.yml novabrands-mgmt:/opt/containers/novabrands-mgmt/
-ssh novabrands-mgmt "cd /opt/containers/novabrands-mgmt && docker compose up -d"
+scp docker-compose.yml stack.env root@178.104.149.226:/opt/containers/novabrands-mgmt/
+ssh -i ~/.ssh/novabrands-hetzner root@178.104.149.226 \
+  "cd /opt/containers/novabrands-mgmt && \
+   set -a && source .secrets.env && source stack.env && set +a && \
+   docker compose up -d"
 
-# Secrets are managed via .env (template uses pass:// references for Proton Pass)
+# Config: stack.env (committed, plaintext config)
+# Secrets: Infisical (project: novabrands-mgmt, path: /novabrands-mgmt, env: prod)
+# On server: .secrets.env (mode 600, exported from Infisical)
 ```
 
 ### Networks
@@ -153,8 +137,5 @@ ssh novabrands-mgmt "cd /opt/containers/novabrands-mgmt && docker compose up -d"
 |---------|------|---------|
 | `proxy` | external | Traefik to public services |
 | `socket-proxy` | internal | Traefik to Docker socket proxy |
-| `coder-socket-proxy` | internal | Coder to Docker socket proxy |
 | `openproject-backend` | external | OpenProject to PostgreSQL/Memcached |
 | `nextcloud-backend` | external | Nextcloud to PostgreSQL/Redis |
-| `coder-backend` | external | Coder to PostgreSQL |
-| `speakr-backend` | bridge | Speakr to WhisperX ASR |
