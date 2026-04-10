@@ -2,7 +2,7 @@
 # ============================================================================
 # Documentation Stack - Server Setup Script
 # ============================================================================
-# Provisioniert einen OVH RISE-S Dedicated Server (Ubuntu 24.04 LTS):
+# Provisioniert einen Hetzner CX33 VPS (Ubuntu 24.04 LTS):
 #   1.  RAID-Health pruefen
 #   2.  Needrestart auf automatisch stellen (keine interaktiven Prompts)
 #   3.  System-Update (apt upgrade)
@@ -26,9 +26,9 @@
 #   - curl, jq, openssl, ssh, pass-cli installiert
 #   - pass-cli eingeloggt (pass-cli login)
 #   - CLOUDFLARE_API_TOKEN und CLOUDFLARE_ZONE_ID gesetzt
-#   - SSH Key ~/.ssh/novabrands-mgmt vorhanden
+#   - SSH Key ~/.ssh/novabrands-hetzner vorhanden
 #   - Proton Pass Vault "Novabrands Infra" mit allen Items angelegt
-#   - OVH-Server laeuft mit Ubuntu 24.04, User 'ubuntu' mit sudo
+#   - Hetzner VPS laeuft mit Ubuntu 24.04, Root-Zugang per SSH Key
 #
 # Verwendung:
 #   pass-cli login
@@ -41,15 +41,15 @@ trap 'error "Setup fehlgeschlagen in Zeile $LINENO."' ERR
 # ---------------------------------------------------------------------------
 # KONFIGURATION
 # ---------------------------------------------------------------------------
-SERVER_IP="51.77.84.41"
-SSH_KEY_FILE="${HOME}/.ssh/novabrands-mgmt"
-ADMIN_USER="ubuntu"
+SERVER_IP="178.104.149.226"
+SSH_KEY_FILE="${HOME}/.ssh/novabrands-hetzner"
+ADMIN_USER="root"
 REPO_URL="https://github.com/SWATPeaceKeeper/novabrands-mgmt.git"
 DEPLOY_DIR="/opt/containers/novabrands-mgmt"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # Subdomains fuer DNS und Traefik
-SUBDOMAINS=("openproject" "cloud" "office" "coder" "traefik")
+SUBDOMAINS=("openproject" "cloud" "office" "traefik")
 
 # ---------------------------------------------------------------------------
 # HILFSFUNKTIONEN
@@ -120,17 +120,15 @@ remote true 2>/dev/null || die "SSH-Verbindung fehlgeschlagen."
 ok "SSH bereit."
 
 # ---------------------------------------------------------------------------
-# 3. RAID-HEALTH PRUEFEN
+# 3. DISK-HEALTH PRUEFEN
 # ---------------------------------------------------------------------------
-info "Pruefe RAID-Status..."
+info "Pruefe Disk-Status..."
 
-RAID_STATUS=$(remote "cat /proc/mdstat" 2>/dev/null)
-if echo "$RAID_STATUS" | grep -q '\[UU\]'; then
-  ok "RAID-1 healthy (alle Disks aktiv)."
+DISK_USAGE=$(remote "df -h / | tail -1 | awk '{print \$5}' | tr -d '%'")
+if [ "$DISK_USAGE" -lt 90 ]; then
+  ok "Disk OK (${DISK_USAGE}% belegt)."
 else
-  warn "RAID-Status nicht optimal:"
-  echo "$RAID_STATUS"
-  die "RAID ist nicht healthy. Server nicht provisionieren bis RAID repariert."
+  die "Disk fast voll (${DISK_USAGE}%). Platz schaffen bevor Setup fortfaehrt."
 fi
 
 # ---------------------------------------------------------------------------
@@ -174,7 +172,7 @@ LoginGraceTime 20
 AllowAgentForwarding no
 AllowTcpForwarding no
 X11Forwarding no
-AllowUsers ubuntu
+AllowUsers root
 ClientAliveInterval 300
 ClientAliveCountMax 2
 SSHEOF
@@ -326,11 +324,30 @@ remote "
   sudo locale-gen de_DE.UTF-8 >/dev/null 2>&1
   sudo update-locale LANG=de_DE.UTF-8 >/dev/null 2>&1
 
-  # Swappiness runter (64 GB RAM, Swap nur als Notfall)
+  # Swappiness runter (8 GB RAM, Swap als Sicherheitsnetz)
   sudo sysctl -w vm.swappiness=10 >/dev/null
   echo 'vm.swappiness=10' | sudo tee /etc/sysctl.d/99-swappiness.conf >/dev/null
 "
 ok "Timezone=Europe/Berlin, Locale=de_DE.UTF-8, Swappiness=10."
+
+# ---------------------------------------------------------------------------
+# 11b. SWAP-FILE ANLEGEN
+# ---------------------------------------------------------------------------
+info "Lege 2 GB Swap-File an..."
+
+remote "
+  if [ ! -f /swapfile ]; then
+    fallocate -l 2G /swapfile
+    chmod 600 /swapfile
+    mkswap /swapfile
+    swapon /swapfile
+    echo '/swapfile swap swap defaults 0 0' >> /etc/fstab
+    echo 'Swap-File angelegt und aktiviert.'
+  else
+    echo 'Swap-File existiert bereits.'
+  fi
+"
+ok "Swap-File aktiv (2 GB)."
 
 # ---------------------------------------------------------------------------
 # 12. FAIL2BAN SSH-JAIL
@@ -420,9 +437,8 @@ remote "
   sudo docker network create proxy 2>/dev/null || true
   sudo docker network create openproject-backend 2>/dev/null || true
   sudo docker network create nextcloud-backend 2>/dev/null || true
-  sudo docker network create coder-backend 2>/dev/null || true
 "
-ok "Netzwerke erstellt (proxy, openproject-backend, nextcloud-backend, coder-backend)."
+ok "Netzwerke erstellt (proxy, openproject-backend, nextcloud-backend)."
 
 # ---------------------------------------------------------------------------
 # 17. REPO KLONEN
@@ -538,19 +554,20 @@ echo "==========================================================================
 echo ""
 echo "  Server:     ${SERVER_IP} (novabrands-mgmt)"
 echo "  SSH:        ssh -i ${SSH_KEY_FILE} ${ADMIN_USER}@${SERVER_IP}"
-echo "  User:       ${ADMIN_USER} (sudo, Docker)"
+echo "  User:       ${ADMIN_USER}"
 echo "  Domain:     ${DOMAIN}"
+echo "  Typ:        Hetzner CX33 VPS (4 vCPU, 8 GB RAM, 80 GB SSD)"
 echo "  OS:         Ubuntu 24.04 LTS"
-echo "  RAID:       md2 (/boot) + md3 (/) — RAID-1, ext4"
 echo ""
 echo "  Sicherheit:"
 echo "    UFW:            aktiv (SSH, HTTP, HTTPS)"
 echo "    fail2ban:       aktiv (SSH: 3 Versuche, 1h Ban)"
-echo "    SSH:            Key-only, Root=no, ClientAlive=300s"
+echo "    SSH:            Key-only, ClientAlive=300s"
 echo "    Kernel:         Spoofing/Redirect/SYN-Flood-Schutz, ASLR, no Core Dumps"
 echo "    /dev/shm:       noexec, nosuid, nodev"
 echo "    Docker:         live-restore, no-new-privileges, Socket Proxy"
 echo "    Swappiness:     10"
+echo "    Swap:           2 GB (/swapfile)"
 echo "    Services:       ModemManager, multipathd, udisks2 deaktiviert"
 echo ""
 echo "  DNS Records:"
@@ -564,14 +581,12 @@ echo "    User:      admin"
 echo "    Passwort:  ${TRAEFIK_PASSWORD}"
 echo ""
 echo "  Naechste Schritte:"
-echo "    1. SMTP-Daten in secrets.env eintragen"
-echo "    2. HCLOUD_TOKEN in secrets.env eintragen (fuer Coder)"
-echo "    3. Documentation Stack starten:"
+echo "    1. SMTP-Daten in .env eintragen"
+echo "    2. Documentation Stack starten:"
 echo "       ssh -i ${SSH_KEY_FILE} ${ADMIN_USER}@${SERVER_IP}"
 echo "       cd ${DEPLOY_DIR} && docker compose up -d"
-echo "    4. Services konfigurieren (siehe SPEC.md Abschnitt 20)"
+echo "    3. Services konfigurieren (siehe SPEC.md)"
 echo ""
-echo "  WICHTIG: secrets.env sicher aufbewahren (Passwort-Manager)!"
-echo "  Traefik-Passwort JETZT notieren — wird nicht erneut angezeigt."
+echo "  WICHTIG: Traefik-Passwort JETZT notieren — wird nicht erneut angezeigt."
 echo ""
 echo "============================================================================"
