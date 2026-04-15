@@ -405,7 +405,7 @@ services:
   # COLLABORA ONLINE
   # =========================================================================
   collabora:
-    image: collabora/code:25.04.9.3.1
+    image: collabora/code:25.04.9.4.1
     container_name: collabora
     restart: unless-stopped
     # no-new-privileges incompatible: Collabora needs setuid for sandboxed child processes
