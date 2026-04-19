@@ -249,7 +249,7 @@ services:
   # NEXTCLOUD
   # =========================================================================
   nextcloud:
-    image: nextcloud:32.0.6-apache
+    image: nextcloud:32.0.8-apache
     container_name: nextcloud
     restart: unless-stopped
     security_opt:
@@ -376,7 +376,7 @@ services:
           memory: 128M
 
   nextcloud-cron:
-    image: nextcloud:32.0.6-apache
+    image: nextcloud:32.0.8-apache
     container_name: nextcloud-cron
     restart: unless-stopped
     security_opt:
