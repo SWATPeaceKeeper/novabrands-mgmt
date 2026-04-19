@@ -103,7 +103,7 @@ services:
   # OPENPROJECT
   # =========================================================================
   openproject:
-    image: openproject/openproject:17.2.1
+    image: openproject/openproject:17.2.3
     container_name: openproject
     restart: unless-stopped
     security_opt:
