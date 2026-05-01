@@ -24,7 +24,7 @@ services:
   # DOCKER SOCKET PROXY
   # =========================================================================
   socket-proxy:
-    image: tecnativa/docker-socket-proxy:0.3.0
+    image: tecnativa/docker-socket-proxy:v0.4.2
     container_name: socket-proxy
     restart: unless-stopped
     security_opt:
