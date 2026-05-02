@@ -324,7 +324,7 @@ services:
           memory: 192M
 
   nextcloud-redis:
-    image: redis:7.4.8-alpine
+    image: redis:8.6.2-alpine
     container_name: nextcloud-redis
     restart: unless-stopped
     user: redis
