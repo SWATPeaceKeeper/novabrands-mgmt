@@ -561,7 +561,7 @@ services:
           memory: 2048M
 
   speakr:
-    image: learnedmachine/speakr:0.8.15-alpha-lite
+    image: learnedmachine/speakr:0.10.3-alpha-lite
     container_name: speakr
     restart: unless-stopped
     security_opt:
