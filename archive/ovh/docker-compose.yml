@@ -530,7 +530,7 @@ services:
   # SPEAKR - Speech-to-Text Transcription
   # =========================================================================
   speakr-asr:
-    image: learnedmachine/whisperx-asr-service:0.3.1
+    image: learnedmachine/whisperx-asr-service:0.4.1
     container_name: speakr-asr
     restart: unless-stopped
     shm_size: '4g'
