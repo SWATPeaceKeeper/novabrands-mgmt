@@ -199,7 +199,7 @@ services:
           memory: 192M
 
   openproject-cache:
-    image: memcached:1.6.41-alpine
+    image: memcached:1.6.45-alpine
     container_name: openproject-cache
     restart: unless-stopped
     security_opt:
